@@ -1,0 +1,63 @@
+# Reusable Docker build template
+# Usage: Copy to .forgejo/workflows/ci.yml and configure images
+#
+# Example:
+#   env:
+#     REGISTRY: code.core.ci/softwarehuset
+#     IMAGES: |
+#       ./Dockerfile|myapp|.
+#       ./frontend/Dockerfile|myapp-frontend|./frontend
+#
+# Format: dockerfile_path|image_name|build_context (one per line)
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  REGISTRY: code.core.ci/softwarehuset
+  # Format: dockerfile|image-name|context (one per line)
+  IMAGES: |
+    ./Dockerfile|app|.
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to registry
+        run: echo "${{ secrets.FORGEJO_TOKEN }}" | docker login ${{ env.REGISTRY }} -u djohn --password-stdin
+
+      - name: Build & Push images
+        run: |
+          set -e
+          TAG=${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || github.sha }}
+          IS_MAIN=${{ github.ref == 'refs/heads/main' }}
+          
+          echo "${{ env.IMAGES }}" | grep -v '^$' | while IFS='|' read -r dockerfile image context; do
+            # Trim whitespace
+            dockerfile=$(echo "$dockerfile" | xargs)
+            image=$(echo "$image" | xargs)
+            context=$(echo "$context" | xargs)
+            
+            [ -z "$dockerfile" ] && continue
+            
+            FULL_IMAGE="${{ env.REGISTRY }}/${image}"
+            
+            echo "🐳 Building ${FULL_IMAGE}:${TAG}"
+            echo "   Dockerfile: ${dockerfile}"
+            echo "   Context: ${context}"
+            
+            docker build -f "${dockerfile}" -t "${FULL_IMAGE}:${TAG}" "${context}"
+            docker push "${FULL_IMAGE}:${TAG}"
+            
+            if [ "$IS_MAIN" = "true" ]; then
+              docker tag "${FULL_IMAGE}:${TAG}" "${FULL_IMAGE}:latest"
+              docker push "${FULL_IMAGE}:latest"
+            fi
+          done
