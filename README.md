@@ -1,21 +1,51 @@
 # Templates
 
-CI/CD workflow templates and conventions for Softwarehuset repos.
+CI/CD workflow templates for Softwarehuset repos. Language-agnostic.
 
-## Workflows
+## Docker Build Template
+
+**`workflows/build-images.yml`** - The main template for building Docker images.
+
+### Format
+```
+dockerfile|image-name|context
+```
+
+### Single Image
+```yaml
+env:
+  REGISTRY: code.core.ci/softwarehuset
+  IMAGES: |
+    ./Dockerfile|myapp|.
+```
+
+### Multi-Image
+```yaml
+env:
+  REGISTRY: code.core.ci/softwarehuset
+  IMAGES: |
+    ./src/Dockerfile|api|./src
+    ./frontend/Dockerfile|frontend|./frontend
+    ./docs/Dockerfile|docs|./docs
+```
+
+### Tagging
+| Event | Tag |
+|-------|-----|
+| PR | `pr-{number}` |
+| Main push | `{sha}` + `latest` |
+
+## Other Templates
 
 | Template | Use Case |
 |----------|----------|
-| `forgejo-dotnet.yml` | .NET projects (test + Docker) |
-| `forgejo-node.yml` | Node.js projects (test + Docker) |
+| `forgejo-dotnet.yml` | .NET test job |
+| `forgejo-node.yml` | Node.js test job |
 | `forgejo-kustomize-deploy.yml` | Kubernetes deploy with kustomize |
-| `forgejo-ci.yml` | Generic CI template |
-| `forgejo-ci-simple.yml` | Minimal CI |
 
 ## Conventions
 
 ### Job Naming
-Use `{app} / {task}` format:
 ```yaml
 jobs:
   test:
@@ -27,7 +57,7 @@ jobs:
 ```
 
 ### Container Job Checkout
-SDK images don't have Node.js, so use git clone instead of actions/checkout:
+SDK images lack Node.js for actions/checkout. Use git clone:
 ```yaml
 - name: Checkout
   env:
@@ -40,8 +70,10 @@ SDK images don't have Node.js, so use git clone instead of actions/checkout:
 ```
 
 ### Required Org Secrets
-- `FORGEJO_TOKEN` - For git clone and Docker registry
-- `KUBE_CONFIG` - Base64 encoded kubeconfig for deploys
+| Secret | Purpose |
+|--------|---------|
+| `FORGEJO_TOKEN` | Git clone + Docker registry auth |
+| `KUBE_CONFIG` | Base64 kubeconfig for deploys |
 
 ## AGENTS.md
-Use `AGENTS-TEMPLATE.md` as starting point for repo-specific agent instructions.
+Use `AGENTS-TEMPLATE.md` for repo-specific agent instructions.
