@@ -1,47 +1,65 @@
 # Templates
 
-CI/CD workflow templates for Softwarehuset repos. Language-agnostic.
+CI/CD workflow templates for Softwarehuset repos.
 
-## Docker Build Template
+## Core Templates
 
-**`workflows/build-images.yml`** - The main template for building Docker images.
+### `build-images.yml` - Docker Build (THE way to build images)
 
-### Format
-```
-dockerfile|image-name|context
-```
-
-### Single Image
 ```yaml
 env:
   REGISTRY: code.core.ci/softwarehuset
   IMAGES: |
     ./Dockerfile|myapp|.
+    ./frontend/Dockerfile|myapp-frontend|./frontend
 ```
 
-### Multi-Image
-```yaml
-env:
-  REGISTRY: code.core.ci/softwarehuset
-  IMAGES: |
-    ./src/Dockerfile|api|./src
-    ./frontend/Dockerfile|frontend|./frontend
-    ./docs/Dockerfile|docs|./docs
-```
+Format: `dockerfile|image-name|context` (one per line)
 
-### Tagging
 | Event | Tag |
 |-------|-----|
 | PR | `pr-{number}` |
-| Main push | `{sha}` + `latest` |
+| Main | `{sha}` + `latest` |
 
-## Other Templates
+### `test-dotnet.yml` - .NET Test
 
-| Template | Use Case |
-|----------|----------|
-| `forgejo-dotnet.yml` | .NET test job |
-| `forgejo-node.yml` | Node.js test job |
-| `forgejo-kustomize-deploy.yml` | Kubernetes deploy with kustomize |
+### `test-node.yml` - Node.js Test
+
+### `deploy-kustomize.yml` - Kubernetes Deploy
+
+## Full Example
+
+```yaml
+name: myapp
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  REGISTRY: code.core.ci/softwarehuset
+  IMAGES: |
+    ./Dockerfile|myapp|.
+
+jobs:
+  # From test-dotnet.yml or test-node.yml
+  test:
+    name: test
+    # ...
+
+  # From build-images.yml
+  docker:
+    name: docker
+    # ...
+
+  # From deploy-kustomize.yml
+  deploy:
+    name: deploy
+    needs: [test, docker]
+    if: github.ref == 'refs/heads/main'
+    # ...
+```
 
 ## Conventions
 
@@ -57,7 +75,7 @@ jobs:
 ```
 
 ### Container Job Checkout
-SDK images lack Node.js for actions/checkout. Use git clone:
+SDK images lack Node.js. Use git clone:
 ```yaml
 - name: Checkout
   env:
@@ -72,8 +90,5 @@ SDK images lack Node.js for actions/checkout. Use git clone:
 ### Required Org Secrets
 | Secret | Purpose |
 |--------|---------|
-| `FORGEJO_TOKEN` | Git clone + Docker registry auth |
+| `FORGEJO_TOKEN` | Git clone + Docker registry |
 | `KUBE_CONFIG` | Base64 kubeconfig for deploys |
-
-## AGENTS.md
-Use `AGENTS-TEMPLATE.md` for repo-specific agent instructions.

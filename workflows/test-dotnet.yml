@@ -1,0 +1,41 @@
+# =============================================================================
+# .NET Test Template
+# =============================================================================
+# Test job only. Combine with build-images.yml for Docker builds.
+#
+# USAGE:
+# 1. Copy test job to your ci.yml
+# 2. Adjust solution path if needed
+# =============================================================================
+
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/dotnet/sdk:9.0
+    steps:
+      - name: Checkout
+        env:
+          TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git clone --depth=1 "https://djohn:${TOKEN}@code.core.ci/${{ github.repository }}.git" .
+          git fetch origin "${{ github.ref }}" --depth=1
+          git checkout FETCH_HEAD
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore
+
+      - name: Test
+        run: dotnet test --no-build --verbosity normal --filter 'Category!=Live&Category!=Integration'
