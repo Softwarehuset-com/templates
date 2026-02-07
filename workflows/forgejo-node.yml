@@ -1,0 +1,66 @@
+# Template: Node.js Frontend CI/CD
+# Usage: Copy to .forgejo/workflows/ci.yml and replace:
+#   - APP_NAME: your app name
+#   - NODE_VERSION: 20 or 22
+#   - WORKDIR: working directory (e.g. frontend or .)
+
+name: APP_NAME
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  IMAGE: code.core.ci/softwarehuset/APP_NAME
+
+jobs:
+  test:
+    name: APP_NAME / test
+    runs-on: ubuntu-latest
+    container:
+      image: node:NODE_VERSION
+    defaults:
+      run:
+        working-directory: WORKDIR
+    steps:
+      - name: Checkout
+        env:
+          TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          cd /
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git clone --depth=1 "https://djohn:${TOKEN}@code.core.ci/${{ github.repository }}.git" "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git fetch origin "${{ github.ref }}" --depth=1
+          git checkout FETCH_HEAD
+      - run: npm ci
+      - run: npm run lint --if-present
+      - run: npm test --if-present
+
+  docker:
+    name: APP_NAME / docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Login
+        run: echo "${{ secrets.FORGEJO_TOKEN }}" | docker login code.core.ci -u ${{ github.actor }} --password-stdin
+      - name: Build & Push
+        run: |
+          TAG=${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || github.sha }}
+          docker build -t ${{ env.IMAGE }}:${TAG} WORKDIR
+          docker push ${{ env.IMAGE }}:${TAG}
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            docker tag ${{ env.IMAGE }}:${TAG} ${{ env.IMAGE }}:latest
+            docker push ${{ env.IMAGE }}:latest
+          fi
+
+  deploy:
+    name: APP_NAME / deploy
+    needs: [test, docker]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "🚀 Deploy ${{ env.IMAGE }}:${{ github.sha }}"

@@ -1,0 +1,171 @@
+# Template: Full CI/CD with Kustomize Deploy (Feature + Test + Prod)
+#
+# Replace:
+#   - APP_NAME: your app name
+#   - IMAGE_PREFIX: registry/org/app (e.g. code.core.ci/softwarehuset/myapp)
+#   - FEATURE_DOMAIN: feature branch domain (e.g. feature.myapp.io)
+#   - TEST_DOMAIN: test domain (e.g. test.myapp.io)
+#   - PROD_DOMAIN: prod domain (e.g. myapp.io)
+#   - NAMESPACE_PREFIX: namespace prefix (e.g. myapp)
+#
+# Requirements:
+#   - k8s/overlays/feature/kustomization.yaml
+#   - k8s/overlays/test/kustomization.yaml
+#   - k8s/overlays/prod/kustomization.yaml
+#   - Secrets: KUBE_CONFIG (base64), FORGEJO_TOKEN
+
+name: APP_NAME
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  IMAGE_PREFIX: IMAGE_PREFIX
+
+jobs:
+  # ============================================
+  # TEST + DOCKER (parallel)
+  # ============================================
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    container:
+      image: YOUR_TEST_IMAGE
+    steps:
+      - name: Checkout
+        env:
+          TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git clone --depth=1 "https://djohn:${TOKEN}@code.core.ci/${{ github.repository }}.git" .
+          git fetch origin "${{ github.ref }}" --depth=1
+          git checkout FETCH_HEAD
+      - run: echo "Run your tests here"
+
+  docker:
+    name: docker
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Set tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "tag=pr-${{ github.event.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+      - name: Login
+        run: echo "${{ secrets.FORGEJO_TOKEN }}" | docker login code.core.ci -u ${{ github.actor }} --password-stdin
+      - name: Build & Push
+        run: |
+          docker build -t ${{ env.IMAGE_PREFIX }}:${{ steps.tag.outputs.tag }} .
+          docker push ${{ env.IMAGE_PREFIX }}:${{ steps.tag.outputs.tag }}
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            docker tag ${{ env.IMAGE_PREFIX }}:${{ steps.tag.outputs.tag }} ${{ env.IMAGE_PREFIX }}:latest
+            docker push ${{ env.IMAGE_PREFIX }}:latest
+          fi
+
+  # ============================================
+  # DEPLOY: FEATURE (PR only)
+  # ============================================
+  deploy-feature:
+    name: deploy / feature
+    needs: [test, docker]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: feature
+      url: https://pr-${{ github.event.number }}.FEATURE_DOMAIN
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+      - name: Deploy feature branch
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+          TAG: pr-${{ github.event.number }}
+        run: |
+          cd k8s/overlays/feature
+          
+          # Set PR-specific prefix for resource isolation
+          kustomize edit set nameprefix "pr-${PR_NUMBER}-"
+          
+          # Update image
+          kustomize edit set image YOUR_IMAGE=${{ env.IMAGE_PREFIX }}:${TAG}
+          
+          # Update ingress host (adjust sed pattern as needed)
+          sed -i "s/FEATURE_DOMAIN/pr-${PR_NUMBER}.FEATURE_DOMAIN/g" patch-ingress.yaml
+          
+          # Apply
+          kustomize build . | kubectl apply -f -
+          
+          # Wait for rollout
+          kubectl -n NAMESPACE_PREFIX-feature rollout status deployment/pr-${PR_NUMBER}-app --timeout=120s || true
+      - name: Comment PR
+        env:
+          TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          curl -s -X POST "https://code.core.ci/api/v1/repos/${{ github.repository }}/issues/${{ github.event.number }}/comments" \
+            -H "Authorization: token ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"body":"🚀 **Feature deployed!**\n\n🔗 https://pr-${{ github.event.number }}.FEATURE_DOMAIN"}'
+
+  # ============================================
+  # DEPLOY: TEST (main only)
+  # ============================================
+  deploy-test:
+    name: deploy / test
+    needs: [test, docker]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: test
+      url: https://TEST_DOMAIN
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+      - name: Deploy to test
+        run: |
+          cd k8s/overlays/test
+          kustomize edit set image YOUR_IMAGE=${{ env.IMAGE_PREFIX }}:${{ github.sha }}
+          kustomize build . | kubectl apply -f -
+          kubectl -n NAMESPACE_PREFIX-test rollout status deployment/app --timeout=180s
+
+  # ============================================
+  # DEPLOY: PROD (main only, after test)
+  # ============================================
+  deploy-prod:
+    name: deploy / prod
+    needs: [deploy-test]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://PROD_DOMAIN
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+      - name: Deploy to production
+        run: |
+          cd k8s/overlays/prod
+          kustomize edit set image YOUR_IMAGE=${{ env.IMAGE_PREFIX }}:${{ github.sha }}
+          kustomize build . | kubectl apply -f -
+          kubectl -n NAMESPACE_PREFIX-prod rollout status deployment/app --timeout=180s
