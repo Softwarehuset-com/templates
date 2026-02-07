@@ -1,11 +1,8 @@
 # =============================================================================
 # .NET Test Template
 # =============================================================================
-# Test job only. Combine with build-images.yml for Docker builds.
-#
-# USAGE:
-# 1. Copy test job to your ci.yml
-# 2. Adjust solution path if needed
+# Auto-detects docker-compose.yml and spins up services if present.
+# Combine with build-images.yml for Docker builds.
 # =============================================================================
 
 name: test
@@ -19,23 +16,34 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    container:
-      image: mcr.microsoft.com/dotnet/sdk:9.0
     steps:
-      - name: Checkout
-        env:
-          TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git clone --depth=1 "https://djohn:${TOKEN}@code.core.ci/${{ github.repository }}.git" .
-          git fetch origin "${{ github.ref }}" --depth=1
-          git checkout FETCH_HEAD
+          curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 9.0
+          echo "$HOME/.dotnet" >> $GITHUB_PATH
+
+      - name: Start services
+        run: |
+          if [ -f docker-compose.yml ] || [ -f docker-compose.yaml ]; then
+            echo "📦 Found docker-compose, starting services..."
+            docker-compose up -d
+            sleep 5
+          fi
 
       - name: Restore
-        run: dotnet restore
+        run: ~/.dotnet/dotnet restore
 
       - name: Build
-        run: dotnet build --no-restore
+        run: ~/.dotnet/dotnet build --no-restore
 
       - name: Test
-        run: dotnet test --no-build --verbosity normal --filter 'Category!=Live&Category!=Integration'
+        run: ~/.dotnet/dotnet test --no-build --verbosity normal --filter 'Category!=Live&Category!=Integration'
+
+      - name: Stop services
+        if: always()
+        run: |
+          if [ -f docker-compose.yml ] || [ -f docker-compose.yaml ]; then
+            docker-compose down
+          fi

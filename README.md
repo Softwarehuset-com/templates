@@ -4,7 +4,9 @@ CI/CD workflow templates for Softwarehuset repos.
 
 ## Core Templates
 
-### `build-images.yml` - Docker Build (THE way to build images)
+### `build-images.yml` - Docker Build
+
+**The only way to build Docker images.**
 
 ```yaml
 env:
@@ -21,11 +23,26 @@ Format: `dockerfile|image-name|context` (one per line)
 | PR | `pr-{number}` |
 | Main | `{sha}` + `latest` |
 
-### `test-dotnet.yml` - .NET Test
+### Test Templates
 
-### `test-node.yml` - Node.js Test
+All test templates **auto-detect docker-compose.yml** and spin up services if present.
+
+| Template | Language |
+|----------|----------|
+| `test-dotnet.yml` | .NET 9.0 |
+| `test-node.yml` | Node.js 22 |
+| `test-python.yml` | Python 3 |
 
 ### `deploy-kustomize.yml` - Kubernetes Deploy
+
+## Auto Docker-Compose
+
+If your repo has a `docker-compose.yml`, the test templates will:
+1. `docker-compose up -d` before tests
+2. Run your tests
+3. `docker-compose down` after (always, even on failure)
+
+No config needed. Just have a docker-compose.yml.
 
 ## Full Example
 
@@ -43,51 +60,37 @@ env:
     ./Dockerfile|myapp|.
 
 jobs:
-  # From test-dotnet.yml or test-node.yml
   test:
     name: test
-    # ...
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start services
+        run: |
+          if [ -f docker-compose.yml ]; then
+            docker-compose up -d && sleep 5
+          fi
+      - run: npm ci
+      - run: npm test
+      - name: Stop services
+        if: always()
+        run: docker-compose down 2>/dev/null || true
 
-  # From build-images.yml
   docker:
     name: docker
-    # ...
+    runs-on: ubuntu-latest
+    steps:
+      # ... from build-images.yml
 
-  # From deploy-kustomize.yml
   deploy:
     name: deploy
     needs: [test, docker]
     if: github.ref == 'refs/heads/main'
-    # ...
+    # ... from deploy-kustomize.yml
 ```
 
-## Conventions
+## Required Org Secrets
 
-### Job Naming
-```yaml
-jobs:
-  test:
-    name: test
-  docker:
-    name: docker
-  deploy:
-    name: deploy
-```
-
-### Container Job Checkout
-SDK images lack Node.js. Use git clone:
-```yaml
-- name: Checkout
-  env:
-    TOKEN: ${{ secrets.FORGEJO_TOKEN }}
-  run: |
-    git config --global --add safe.directory "$GITHUB_WORKSPACE"
-    git clone --depth=1 "https://djohn:${TOKEN}@code.core.ci/${{ github.repository }}.git" .
-    git fetch origin "${{ github.ref }}" --depth=1
-    git checkout FETCH_HEAD
-```
-
-### Required Org Secrets
 | Secret | Purpose |
 |--------|---------|
 | `FORGEJO_TOKEN` | Git clone + Docker registry |

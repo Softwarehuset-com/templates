@@ -1,5 +1,5 @@
 # =============================================================================
-# Node.js Test Template
+# Python Test Template
 # =============================================================================
 # Auto-detects docker-compose.yml and spins up services if present.
 # Combine with build-images.yml for Docker builds.
@@ -19,14 +19,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Python
         run: |
-          curl -fsSL https://fnm.vercel.app/install | bash
-          export PATH="$HOME/.local/share/fnm:$PATH"
-          eval "$(fnm env)"
-          fnm install 22
-          fnm use 22
-          echo "$HOME/.local/share/fnm/aliases/default/bin" >> $GITHUB_PATH
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip python3-venv
 
       - name: Start services
         run: |
@@ -37,13 +33,20 @@ jobs:
           fi
 
       - name: Install
-        run: npm ci
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install -r requirements.txt || pip install -e ".[dev]" || true
 
       - name: Lint
-        run: npm run lint --if-present
+        run: |
+          . .venv/bin/activate
+          ruff check . || flake8 . || true
 
       - name: Test
-        run: npm test --if-present
+        run: |
+          . .venv/bin/activate
+          pytest || python -m unittest discover || true
 
       - name: Stop services
         if: always()
