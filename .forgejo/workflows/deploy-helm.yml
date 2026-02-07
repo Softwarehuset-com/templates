@@ -1,0 +1,122 @@
+# =============================================================================
+# Helm Deploy (Reusable Workflow)
+# =============================================================================
+# Reusable workflow for helm upgrade --install deployments.
+#
+# REQUIRES:
+# - KUBE_CONFIG secret (base64 encoded kubeconfig)
+#
+# USAGE:
+#   jobs:
+#     deploy:
+#       uses: softwarehuset/templates/.forgejo/workflows/deploy-helm.yml@main
+#       with:
+#         helm_repo: https://argoproj.github.io/argo-helm
+#         helm_repo_name: argo
+#         chart: argo-cd
+#         release: argocd
+#         namespace: argocd
+#         version: "7.7.16"
+#         values_file: manifests/argocd/values.yaml
+#       secrets:
+#         KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+# =============================================================================
+
+name: Helm Deploy
+
+on:
+  workflow_call:
+    inputs:
+      helm_repo:
+        description: "Helm repository URL"
+        required: true
+        type: string
+      helm_repo_name:
+        description: "Helm repository name (for helm repo add)"
+        required: true
+        type: string
+      chart:
+        description: "Chart name (without repo prefix)"
+        required: true
+        type: string
+      release:
+        description: "Helm release name"
+        required: true
+        type: string
+      namespace:
+        description: "Kubernetes namespace"
+        required: true
+        type: string
+      version:
+        description: "Chart version (leave empty for latest)"
+        required: false
+        type: string
+        default: ""
+      values_file:
+        description: "Path to values file (relative to repo root)"
+        required: false
+        type: string
+        default: ""
+      create_namespace:
+        description: "Create namespace if it does not exist"
+        required: false
+        type: boolean
+        default: true
+      timeout:
+        description: "Helm timeout"
+        required: false
+        type: string
+        default: "5m"
+    secrets:
+      KUBE_CONFIG:
+        required: true
+
+jobs:
+  deploy:
+    name: helm deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Install Helm
+        run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Deploy
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          echo "$KUBECONFIG_DATA" | base64 -d > /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+
+          helm repo add ${{ inputs.helm_repo_name }} ${{ inputs.helm_repo }}
+          helm repo update
+
+          VERSION_FLAG=""
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION_FLAG="--version ${{ inputs.version }}"
+          fi
+
+          VALUES_FLAG=""
+          if [ -n "${{ inputs.values_file }}" ]; then
+            VALUES_FLAG="--values ${{ inputs.values_file }}"
+          fi
+
+          NAMESPACE_FLAG=""
+          if [ "${{ inputs.create_namespace }}" = "true" ]; then
+            NAMESPACE_FLAG="--create-namespace"
+          fi
+
+          helm upgrade --install ${{ inputs.release }} \
+            ${{ inputs.helm_repo_name }}/${{ inputs.chart }} \
+            --namespace ${{ inputs.namespace }} \
+            ${NAMESPACE_FLAG} \
+            ${VERSION_FLAG} \
+            ${VALUES_FLAG} \
+            --wait --timeout ${{ inputs.timeout }}
