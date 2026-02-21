@@ -1,0 +1,65 @@
+name: deploy-kustomize
+
+on:
+  workflow_call:
+    inputs:
+      namespace:
+        description: "Kubernetes namespace"
+        type: string
+        required: true
+      deployment:
+        description: "Deployment name to update"
+        type: string
+        required: true
+      image:
+        description: "Image name (without registry prefix)"
+        type: string
+        required: true
+      kustomize-path:
+        description: "Path to kustomization directory"
+        type: string
+        default: "k8s/prod"
+      registry:
+        description: "Container registry"
+        type: string
+        default: "code.core.ci/softwarehuset"
+      tag:
+        description: "Image tag (empty = git sha short)"
+        type: string
+        default: ""
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubectl
+        run: |
+          wget -q "https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl" -O /tmp/kubectl
+          chmod +x /tmp/kubectl
+          sudo mv /tmp/kubectl /usr/local/bin/
+
+      - name: Setup kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > $HOME/.kube/config
+
+      - name: Deploy
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(echo "${{ github.sha }}" | head -c 7)
+          fi
+
+          FULL_IMAGE="${{ inputs.registry }}/${{ inputs.image }}:${TAG}"
+
+          cd "${{ inputs.kustomize-path }}"
+          kubectl kustomize . | kubectl apply -n "${{ inputs.namespace }}" -f -
+          kubectl set image -n "${{ inputs.namespace }}" \
+            deployment/${{ inputs.deployment }} \
+            ${{ inputs.deployment }}="${FULL_IMAGE}"
+          kubectl rollout status -n "${{ inputs.namespace }}" \
+            deployment/${{ inputs.deployment }} --timeout=300s

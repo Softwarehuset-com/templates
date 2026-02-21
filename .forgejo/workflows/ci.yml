@@ -1,0 +1,12 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # Forgejo requires runs-on on the caller job (unlike GitHub Actions)
+    runs-on: ubuntu-latest
+    uses: ./.forgejo/workflows/test-dotnet.yml

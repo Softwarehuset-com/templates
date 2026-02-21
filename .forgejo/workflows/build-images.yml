@@ -1,0 +1,63 @@
+name: build-images
+
+on:
+  workflow_call:
+    inputs:
+      registry:
+        description: "Container registry"
+        type: string
+        default: "code.core.ci/softwarehuset"
+      images:
+        description: "Images to build (one per line: dockerfile|image-name|context)"
+        type: string
+        required: true
+      tag:
+        description: "Image tag (empty = git sha short)"
+        type: string
+        default: ""
+      push:
+        description: "Push images to registry"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to registry
+        if: ${{ inputs.push }}
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login "${{ inputs.registry }}" \
+            -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
+      - name: Build and push images
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(echo "${{ github.sha }}" | head -c 7)
+          fi
+
+          echo "${{ inputs.images }}" | while IFS='|' read -r dockerfile image_name context; do
+            # Skip empty lines
+            [ -z "$dockerfile" ] && continue
+
+            # Trim whitespace
+            dockerfile=$(echo "$dockerfile" | xargs)
+            image_name=$(echo "$image_name" | xargs)
+            context=$(echo "${context:-.}" | xargs)
+
+            FULL_IMAGE="${{ inputs.registry }}/${image_name}:${TAG}"
+            LATEST_IMAGE="${{ inputs.registry }}/${image_name}:latest"
+
+            echo "Building $FULL_IMAGE from $dockerfile (context: $context)"
+            docker build -f "$dockerfile" -t "$FULL_IMAGE" -t "$LATEST_IMAGE" "$context"
+
+            if [ "${{ inputs.push }}" = "true" ]; then
+              docker push "$FULL_IMAGE"
+              docker push "$LATEST_IMAGE"
+            fi
+          done
