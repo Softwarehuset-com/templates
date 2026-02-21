@@ -1,0 +1,104 @@
+name: test-node
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: "Node.js version to install"
+        type: string
+        default: "22"
+      package-manager:
+        description: "Package manager (npm, yarn, pnpm) — empty = auto-detect"
+        type: string
+        default: ""
+      working-directory:
+        description: "Working directory (empty = auto-detect from package.json)"
+        type: string
+        default: ""
+      docker-compose:
+        description: "Auto-detect and start docker compose if present"
+        type: boolean
+        default: true
+      submodules:
+        description: "Checkout with submodules"
+        type: boolean
+        default: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules }}
+
+      - name: Install Node.js
+        run: |
+          wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          nvm install ${{ inputs.node-version }}
+          nvm use ${{ inputs.node-version }}
+          echo "$NVM_DIR/versions/node/$(nvm current)/bin" >> $GITHUB_PATH
+          node --version
+
+      - name: Start docker compose
+        id: docker
+        if: ${{ inputs.docker-compose }}
+        run: |
+          COMPOSE_FILE=$(find . -maxdepth 3 -name "docker-compose.yml" -o -name "docker-compose.yaml" -o -name "compose.yml" -o -name "compose.yaml" | grep -v vendor | head -1)
+          if [ -n "$COMPOSE_FILE" ]; then
+            COMPOSE_DIR=$(dirname "$COMPOSE_FILE")
+            echo "compose_dir=$COMPOSE_DIR" >> $GITHUB_OUTPUT
+            echo "compose_found=true" >> $GITHUB_OUTPUT
+            cd "$COMPOSE_DIR"
+            docker compose up -d
+            sleep 5
+          else
+            echo "compose_found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Detect working directory
+        id: workdir
+        run: |
+          if [ -n "${{ inputs.working-directory }}" ]; then
+            echo "path=${{ inputs.working-directory }}" >> $GITHUB_OUTPUT
+          else
+            PKG=$(find . -maxdepth 3 -name "package.json" | grep -v node_modules | grep -v vendor | head -1)
+            if [ -z "$PKG" ]; then
+              echo "::error::No package.json found"
+              exit 1
+            fi
+            echo "path=$(dirname $PKG)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Detect package manager
+        id: pm
+        working-directory: ${{ steps.workdir.outputs.path }}
+        run: |
+          if [ -n "${{ inputs.package-manager }}" ]; then
+            echo "cmd=${{ inputs.package-manager }}" >> $GITHUB_OUTPUT
+          elif [ -f "pnpm-lock.yaml" ]; then
+            npm install -g pnpm
+            echo "cmd=pnpm" >> $GITHUB_OUTPUT
+          elif [ -f "yarn.lock" ]; then
+            echo "cmd=yarn" >> $GITHUB_OUTPUT
+          else
+            echo "cmd=npm" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies
+        working-directory: ${{ steps.workdir.outputs.path }}
+        run: ${{ steps.pm.outputs.cmd }} install
+
+      - name: Test
+        working-directory: ${{ steps.workdir.outputs.path }}
+        run: ${{ steps.pm.outputs.cmd }} test
+
+      - name: Stop docker compose
+        if: always() && steps.docker.outputs.compose_found == 'true'
+        run: |
+          cd "${{ steps.docker.outputs.compose_dir }}"
+          docker compose down || true

@@ -6,65 +6,10 @@ on:
   pull_request:
 
 jobs:
-  validate-generator:
-    name: validate-generator
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq python3-yaml
-
-      - name: Run generator on sample config
-        run: |
-          cd samples/dotnet-api
-          python3 ../../generate.sh ci-config.yml . > /tmp/generated.yml
-          cat /tmp/generated.yml
-
-      - name: Validate generated YAML
-        run: python3 -c "import yaml; yaml.safe_load(open('/tmp/generated.yml'))" && echo "Valid YAML"
-
-  test-sample-dotnet:
-    name: test-sample-dotnet
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup .NET 9
-        run: |
-          wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
-          bash /tmp/dotnet-install.sh --channel 9.0 --install-dir $HOME/.dotnet
-          echo "$HOME/.dotnet" >> $GITHUB_PATH
-          $HOME/.dotnet/dotnet --version
-
-      - name: Start Postgres
-        working-directory: samples/dotnet-api
-        run: |
-          docker compose up -d
-          for i in $(seq 1 30); do
-            docker compose exec -T postgres pg_isready -U testuser -d sampledb 2>/dev/null && break
-            sleep 2
-          done
-
-      - name: Restore
-        working-directory: samples/dotnet-api
-        run: $HOME/.dotnet/dotnet restore SampleApi.sln
-
-      - name: Build
-        working-directory: samples/dotnet-api
-        run: $HOME/.dotnet/dotnet build SampleApi.sln --no-restore
-
-      - name: Test
-        working-directory: samples/dotnet-api
-        env:
-          ConnectionStrings__DefaultConnection: "Host=localhost;Port=5432;Database=sampledb;Username=testuser;Password=testpass"
-        run: $HOME/.dotnet/dotnet test SampleApi.sln --no-build --verbosity normal
-
-      - name: Stop services
-        if: always()
-        working-directory: samples/dotnet-api
-        run: docker compose down || true
+  test-sample:
+    uses: ./.forgejo/workflows/test-dotnet.yml
+    # Smart defaults handle everything:
+    # - auto-detects samples/dotnet-api/SampleApi.sln
+    # - auto-detects docker-compose.yml in samples/dotnet-api/
+    # - installs .NET 9.0
+    # - submodules: true

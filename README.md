@@ -1,178 +1,133 @@
-# CI/CD Workflow Templates
+# Templates
 
-Reusable Forgejo Actions workflow templates + a generator that composes them from minimal declarative config.
+Reusable CI/CD workflows for Forgejo. Other repos call these via `uses:` — no generator scripts, no copy-paste.
 
-## Templates
+## Available Workflows
 
-| Template | Description |
+| Workflow | Description |
 |---|---|
-| `workflows/test-dotnet.yml` | .NET test job (auto-detects docker-compose) |
-| `workflows/test-node.yml` | Node.js test job (fnm + npm) |
-| `workflows/test-python.yml` | Python test job (venv + pytest) |
-| `workflows/build-images.yml` | Multi-image Docker builds |
-| `workflows/deploy-kustomize.yml` | Kubernetes deploy via Kustomize |
-| `workflows/deploy-helm.yml` | Kubernetes deploy via Helm |
+| `test-dotnet.yml` | .NET restore → build → test with auto-detection |
+| `test-node.yml` | Node.js install → npm/yarn/pnpm test |
+| `test-python.yml` | Python pip install → pytest |
+| `build-images.yml` | Build and push Docker images |
+| `deploy-kustomize.yml` | Deploy via kubectl + kustomize |
+| `deploy-helm.yml` | Deploy via Helm upgrade --install |
 
-## Generator
+## Usage
 
-`generate.sh` reads a simple YAML config and outputs a complete `.forgejo/workflows/ci.yml`.
+Add a workflow file to your repo (e.g. `.forgejo/workflows/ci.yml`):
 
-### Usage
-
-```bash
-# From your repo root:
-/path/to/templates/generate.sh ci-config.yml > .forgejo/workflows/ci.yml
-```
-
-### Smart Defaults
-
-The generator auto-detects as much as possible:
-
-| Setting | Default | Auto-detection |
-|---|---|---|
-| `solution-path` | — | Scans repo for `*.slnx` / `*.sln` (excludes vendor/) |
-| `docker-compose` | `false` | Set to `auto` to detect `docker-compose.yml` presence |
-| `submodules` | `true` | — |
-| `dotnet-channel` | `10` | — |
-| `node-version` | `22` | — |
-| `registry` | `code.core.ci/softwarehuset` | — |
-| `timeout-minutes` | `20` | — |
-
-### Config Format
-
-Everything is declarative blocks. No custom shell commands.
+### .NET
 
 ```yaml
-# Minimal .NET + Docker + Deploy config:
-test-dotnet:
-  docker-compose: auto       # auto-detect docker-compose.yml
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
 
-build-images:
-  - ./Dockerfile|myapp|.     # format: dockerfile|image-name|context
+jobs:
+  test:
+    uses: softwarehuset/templates/.forgejo/workflows/test-dotnet.yml@main
+    # That's it! Defaults handle the rest:
+    # - auto-detects *.sln / *.slnx
+    # - auto-detects and starts docker-compose if present
+    # - .NET 9.0, submodules enabled
+    # - test filter: Category!=Live&Category!=Integration
 
-deploy-kustomize:
-  namespace: myapp
-  deployment: myapp
-  image: myapp
+  # Or with overrides:
+  test-custom:
+    uses: softwarehuset/templates/.forgejo/workflows/test-dotnet.yml@main
+    with:
+      dotnet-channel: "10.0"
+      solution-path: "src/MyApp.sln"
+      test-filter: ""
 ```
 
-### Supported Blocks
-
-#### `test-dotnet`
+### Node.js
 
 ```yaml
-test-dotnet:
-  name: test-backend          # job name (default: test-backend)
-  solution-path: src/App.sln  # auto-detected if omitted
-  docker-compose: auto        # auto | true | false
-  dotnet-channel: "10"        # default: 10
-  submodules: true            # default: true
-  timeout-minutes: 20         # default: 20
+jobs:
+  test:
+    uses: softwarehuset/templates/.forgejo/workflows/test-node.yml@main
+    # auto-detects package.json, lockfile → npm/yarn/pnpm
+    
+  test-custom:
+    uses: softwarehuset/templates/.forgejo/workflows/test-node.yml@main
+    with:
+      node-version: "20"
+      working-directory: "frontend"
 ```
 
-#### `test-node`
+### Python
 
 ```yaml
-test-node:
-  name: test-frontend         # job name (default: test-frontend)
-  working-directory: frontend  # optional
-  node-version: "22"          # default: 22
-  timeout-minutes: 20
+jobs:
+  test:
+    uses: softwarehuset/templates/.forgejo/workflows/test-python.yml@main
+    # auto-detects pyproject.toml or setup.py
 ```
 
-#### `test-python`
+### Build Images
 
 ```yaml
-test-python:
-  name: test                  # job name (default: test)
-  docker-compose: auto
-  timeout-minutes: 20
+jobs:
+  build:
+    uses: softwarehuset/templates/.forgejo/workflows/build-images.yml@main
+    with:
+      images: |
+        Dockerfile|my-api|.
+        src/worker/Dockerfile|my-worker|src/worker
 ```
 
-#### `build-images`
-
-List of `dockerfile|image-name|context`:
+### Deploy (Kustomize)
 
 ```yaml
-build-images:
-  - ./backend/Dockerfile|api|.
-  - ./frontend/Dockerfile|frontend|./frontend
+jobs:
+  deploy:
+    needs: [build]
+    uses: softwarehuset/templates/.forgejo/workflows/deploy-kustomize.yml@main
+    with:
+      namespace: production
+      deployment: my-api
+      image: my-api
 ```
 
-#### `deploy-kustomize`
+### Deploy (Helm)
 
 ```yaml
-deploy-kustomize:
-  namespace: myapp
-  kustomize-path: k8s/prod    # default: k8s/prod
-
-  # Single deployment:
-  deployment: myapp
-  image: myapp
-
-  # Or multiple deployments:
-  deployments:
-    - deployment: api
-      image: api
-      container: api
-    - deployment: frontend
-      image: frontend
-      container: frontend
+jobs:
+  deploy:
+    uses: softwarehuset/templates/.forgejo/workflows/deploy-helm.yml@main
+    with:
+      helm_repo: https://charts.example.com
+      helm_repo_name: myrepo
+      chart: my-chart
+      release: my-release
+      namespace: production
+      version: "1.2.3"
+      values_file: k8s/values.yaml
 ```
 
-#### `deploy-helm`
+## Runner Requirements
 
-```yaml
-deploy-helm:
-  namespace: myapp
-  release: myapp              # default: namespace
-  chart: oci://registry/charts/myapp
-  chart-version: "1.0.0"     # optional
-  values-file: values.yaml   # default: values.yaml
-```
+These workflows are designed for **bare-metal Ubuntu runners**:
 
-### Global Settings
+- No `container:` or `services:` (not supported)
+- Uses `wget` (not `curl`) for downloads
+- .NET installed via `dotnet-install.sh` (not `actions/setup-dotnet`)
+- Docker compose v2 (`docker compose`, not `docker-compose`)
+- Secrets are inherited automatically (Forgejo doesn't support `secrets:` in `workflow_call`)
 
-Set at the top level to override defaults:
+## Smart Defaults
 
-```yaml
-registry: my-registry.example.com/org
-timeout-minutes: 30
-submodules: false
-dotnet-channel: "9.0"
+All workflows use smart auto-detection:
 
-test-dotnet: {}
-build-images:
-  - ./Dockerfile|app|.
-```
+- **Solution path**: Finds `*.sln` / `*.slnx` recursively (up to 3 levels)
+- **Docker compose**: Finds and starts `docker-compose.yml` / `compose.yml` if present
+- **Package manager**: Detects `pnpm-lock.yaml` / `yarn.lock` / `package-lock.json`
+- **Python project**: Detects `pyproject.toml` / `setup.py` / `requirements.txt`
 
-### Example: Full Stack App
+## Samples
 
-```yaml
-test-dotnet:
-  docker-compose: auto
-
-test-node:
-  working-directory: frontend
-
-build-images:
-  - ./backend/Dockerfile|api|.
-  - ./frontend/Dockerfile|frontend|./frontend
-
-deploy-kustomize:
-  namespace: myapp
-  kustomize-path: k8s/prod
-  deployments:
-    - deployment: api
-      image: api
-      container: api
-    - deployment: frontend
-      image: frontend
-      container: frontend
-```
-
-### Job Dependencies
-
-The generator automatically wires `needs:` between jobs:
-- **build-images** needs all test jobs
-- **deploy** needs build-images (or test jobs if no build)
+The `samples/dotnet-api/` directory contains a sample .NET API with tests and docker-compose, used to validate the `test-dotnet.yml` workflow in this repo's own CI.

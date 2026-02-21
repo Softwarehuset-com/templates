@@ -1,0 +1,87 @@
+name: test-python
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: "Python version"
+        type: string
+        default: "3"
+      working-directory:
+        description: "Working directory (empty = auto-detect from pyproject.toml/setup.py)"
+        type: string
+        default: ""
+      docker-compose:
+        description: "Auto-detect and start docker compose if present"
+        type: boolean
+        default: true
+      submodules:
+        description: "Checkout with submodules"
+        type: boolean
+        default: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules }}
+
+      - name: Start docker compose
+        id: docker
+        if: ${{ inputs.docker-compose }}
+        run: |
+          COMPOSE_FILE=$(find . -maxdepth 3 -name "docker-compose.yml" -o -name "docker-compose.yaml" -o -name "compose.yml" -o -name "compose.yaml" | grep -v vendor | head -1)
+          if [ -n "$COMPOSE_FILE" ]; then
+            COMPOSE_DIR=$(dirname "$COMPOSE_FILE")
+            echo "compose_dir=$COMPOSE_DIR" >> $GITHUB_OUTPUT
+            echo "compose_found=true" >> $GITHUB_OUTPUT
+            cd "$COMPOSE_DIR"
+            docker compose up -d
+            sleep 5
+          else
+            echo "compose_found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Detect working directory
+        id: workdir
+        run: |
+          if [ -n "${{ inputs.working-directory }}" ]; then
+            echo "path=${{ inputs.working-directory }}" >> $GITHUB_OUTPUT
+          else
+            # Look for pyproject.toml or setup.py
+            PROJ=$(find . -maxdepth 3 \( -name "pyproject.toml" -o -name "setup.py" \) | grep -v vendor | head -1)
+            if [ -n "$PROJ" ]; then
+              echo "path=$(dirname $PROJ)" >> $GITHUB_OUTPUT
+            else
+              echo "path=." >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Install dependencies
+        working-directory: ${{ steps.workdir.outputs.path }}
+        run: |
+          python${{ inputs.python-version }} -m pip install --upgrade pip
+          if [ -f "pyproject.toml" ]; then
+            python${{ inputs.python-version }} -m pip install -e ".[dev,test]" 2>/dev/null || python${{ inputs.python-version }} -m pip install -e "." 2>/dev/null || true
+          fi
+          if [ -f "requirements.txt" ]; then
+            python${{ inputs.python-version }} -m pip install -r requirements.txt
+          fi
+          if [ -f "requirements-dev.txt" ]; then
+            python${{ inputs.python-version }} -m pip install -r requirements-dev.txt
+          fi
+          python${{ inputs.python-version }} -m pip install pytest 2>/dev/null || true
+
+      - name: Test
+        working-directory: ${{ steps.workdir.outputs.path }}
+        run: python${{ inputs.python-version }} -m pytest -v
+
+      - name: Stop docker compose
+        if: always() && steps.docker.outputs.compose_found == 'true'
+        run: |
+          cd "${{ steps.docker.outputs.compose_dir }}"
+          docker compose down || true

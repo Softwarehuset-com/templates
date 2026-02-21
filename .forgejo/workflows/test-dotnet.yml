@@ -1,0 +1,106 @@
+name: test-dotnet
+
+on:
+  workflow_call:
+    inputs:
+      dotnet-channel:
+        description: ".NET channel to install (e.g. 9.0, 10.0)"
+        type: string
+        default: "9.0"
+      solution-path:
+        description: "Path to .sln/.slnx file (empty = auto-detect)"
+        type: string
+        default: ""
+      docker-compose:
+        description: "Auto-detect and start docker compose if present"
+        type: boolean
+        default: true
+      submodules:
+        description: "Checkout with submodules"
+        type: boolean
+        default: true
+      test-filter:
+        description: "dotnet test filter expression"
+        type: string
+        default: "Category!=Live&Category!=Integration"
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules }}
+
+      - name: Install .NET
+        run: |
+          wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel ${{ inputs.dotnet-channel }} --install-dir $HOME/.dotnet
+          echo "$HOME/.dotnet" >> $GITHUB_PATH
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+          $HOME/.dotnet/dotnet --version
+
+      - name: Start docker compose
+        id: docker
+        if: ${{ inputs.docker-compose }}
+        run: |
+          # Find docker-compose file anywhere in the repo
+          COMPOSE_FILE=$(find . -maxdepth 3 -name "docker-compose.yml" -o -name "docker-compose.yaml" -o -name "compose.yml" -o -name "compose.yaml" | grep -v vendor | head -1)
+          if [ -n "$COMPOSE_FILE" ]; then
+            COMPOSE_DIR=$(dirname "$COMPOSE_FILE")
+            echo "compose_dir=$COMPOSE_DIR" >> $GITHUB_OUTPUT
+            echo "compose_found=true" >> $GITHUB_OUTPUT
+            echo "Found compose file: $COMPOSE_FILE"
+            cd "$COMPOSE_DIR"
+            docker compose up -d
+            # Wait for services to be ready
+            sleep 5
+            # If postgres is present, wait for it
+            if docker compose ps | grep -q postgres; then
+              for i in $(seq 1 30); do
+                docker compose exec -T postgres pg_isready 2>/dev/null && break
+                sleep 2
+              done
+            fi
+          else
+            echo "compose_found=false" >> $GITHUB_OUTPUT
+            echo "No docker-compose file found, skipping"
+          fi
+
+      - name: Detect solution
+        id: solution
+        run: |
+          if [ -n "${{ inputs.solution-path }}" ]; then
+            echo "path=${{ inputs.solution-path }}" >> $GITHUB_OUTPUT
+          else
+            SLN=$(find . -maxdepth 3 \( -name "*.sln" -o -name "*.slnx" \) | grep -v vendor | head -1)
+            if [ -z "$SLN" ]; then
+              echo "::error::No solution file found"
+              exit 1
+            fi
+            echo "path=$SLN" >> $GITHUB_OUTPUT
+            echo "Auto-detected solution: $SLN"
+          fi
+
+      - name: Restore
+        run: $HOME/.dotnet/dotnet restore "${{ steps.solution.outputs.path }}"
+
+      - name: Build
+        run: $HOME/.dotnet/dotnet build "${{ steps.solution.outputs.path }}" --no-restore
+
+      - name: Test
+        run: |
+          FILTER="${{ inputs.test-filter }}"
+          FILTER_FLAG=""
+          if [ -n "$FILTER" ]; then
+            FILTER_FLAG="--filter \"$FILTER\""
+          fi
+          eval $HOME/.dotnet/dotnet test "${{ steps.solution.outputs.path }}" --no-build --verbosity normal $FILTER_FLAG
+
+      - name: Stop docker compose
+        if: always() && steps.docker.outputs.compose_found == 'true'
+        run: |
+          cd "${{ steps.docker.outputs.compose_dir }}"
+          docker compose down || true
