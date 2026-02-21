@@ -7,5 +7,6 @@ on:
 
 jobs:
   test:
+    # Forgejo requires runs-on on the caller job (unlike GitHub Actions)
     runs-on: ubuntu-latest
     uses: ./.forgejo/workflows/test-dotnet.yml
