@@ -1,97 +1,178 @@
-# Templates
+# CI/CD Workflow Templates
 
-CI/CD workflow templates for Softwarehuset repos.
+Reusable Forgejo Actions workflow templates + a generator that composes them from minimal declarative config.
 
-## Core Templates
+## Templates
 
-### `build-images.yml` - Docker Build
+| Template | Description |
+|---|---|
+| `workflows/test-dotnet.yml` | .NET test job (auto-detects docker-compose) |
+| `workflows/test-node.yml` | Node.js test job (fnm + npm) |
+| `workflows/test-python.yml` | Python test job (venv + pytest) |
+| `workflows/build-images.yml` | Multi-image Docker builds |
+| `workflows/deploy-kustomize.yml` | Kubernetes deploy via Kustomize |
+| `workflows/deploy-helm.yml` | Kubernetes deploy via Helm |
 
-**The only way to build Docker images.**
+## Generator
 
-```yaml
-env:
-  REGISTRY: code.core.ci/softwarehuset
-  IMAGES: |
-    ./Dockerfile|myapp|.
-    ./frontend/Dockerfile|myapp-frontend|./frontend
+`generate.sh` reads a simple YAML config and outputs a complete `.forgejo/workflows/ci.yml`.
+
+### Usage
+
+```bash
+# From your repo root:
+/path/to/templates/generate.sh ci-config.yml > .forgejo/workflows/ci.yml
 ```
 
-Format: `dockerfile|image-name|context` (one per line)
+### Smart Defaults
 
-| Event | Tag |
-|-------|-----|
-| PR | `pr-{number}` |
-| Main | `{sha}` + `latest` |
+The generator auto-detects as much as possible:
 
-### Test Templates
+| Setting | Default | Auto-detection |
+|---|---|---|
+| `solution-path` | — | Scans repo for `*.slnx` / `*.sln` (excludes vendor/) |
+| `docker-compose` | `false` | Set to `auto` to detect `docker-compose.yml` presence |
+| `submodules` | `true` | — |
+| `dotnet-channel` | `10` | — |
+| `node-version` | `22` | — |
+| `registry` | `code.core.ci/softwarehuset` | — |
+| `timeout-minutes` | `20` | — |
 
-All test templates **auto-detect docker-compose.yml** and spin up services if present.
+### Config Format
 
-| Template | Language |
-|----------|----------|
-| `test-dotnet.yml` | .NET 9.0 |
-| `test-node.yml` | Node.js 22 |
-| `test-python.yml` | Python 3 |
-
-### `deploy-kustomize.yml` - Kubernetes Deploy
-
-## Auto Docker-Compose
-
-If your repo has a `docker-compose.yml`, the test templates will:
-1. `docker-compose up -d` before tests
-2. Run your tests
-3. `docker-compose down` after (always, even on failure)
-
-No config needed. Just have a docker-compose.yml.
-
-## Full Example
+Everything is declarative blocks. No custom shell commands.
 
 ```yaml
-name: myapp
+# Minimal .NET + Docker + Deploy config:
+test-dotnet:
+  docker-compose: auto       # auto-detect docker-compose.yml
 
-on:
-  push:
-    branches: [main]
-  pull_request:
+build-images:
+  - ./Dockerfile|myapp|.     # format: dockerfile|image-name|context
 
-env:
-  REGISTRY: code.core.ci/softwarehuset
-  IMAGES: |
-    ./Dockerfile|myapp|.
-
-jobs:
-  test:
-    name: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Start services
-        run: |
-          if [ -f docker-compose.yml ]; then
-            docker-compose up -d && sleep 5
-          fi
-      - run: npm ci
-      - run: npm test
-      - name: Stop services
-        if: always()
-        run: docker-compose down 2>/dev/null || true
-
-  docker:
-    name: docker
-    runs-on: ubuntu-latest
-    steps:
-      # ... from build-images.yml
-
-  deploy:
-    name: deploy
-    needs: [test, docker]
-    if: github.ref == 'refs/heads/main'
-    # ... from deploy-kustomize.yml
+deploy-kustomize:
+  namespace: myapp
+  deployment: myapp
+  image: myapp
 ```
 
-## Required Org Secrets
+### Supported Blocks
 
-| Secret | Purpose |
-|--------|---------|
-| `FORGEJO_TOKEN` | Git clone + Docker registry |
-| `KUBE_CONFIG` | Base64 kubeconfig for deploys |
+#### `test-dotnet`
+
+```yaml
+test-dotnet:
+  name: test-backend          # job name (default: test-backend)
+  solution-path: src/App.sln  # auto-detected if omitted
+  docker-compose: auto        # auto | true | false
+  dotnet-channel: "10"        # default: 10
+  submodules: true            # default: true
+  timeout-minutes: 20         # default: 20
+```
+
+#### `test-node`
+
+```yaml
+test-node:
+  name: test-frontend         # job name (default: test-frontend)
+  working-directory: frontend  # optional
+  node-version: "22"          # default: 22
+  timeout-minutes: 20
+```
+
+#### `test-python`
+
+```yaml
+test-python:
+  name: test                  # job name (default: test)
+  docker-compose: auto
+  timeout-minutes: 20
+```
+
+#### `build-images`
+
+List of `dockerfile|image-name|context`:
+
+```yaml
+build-images:
+  - ./backend/Dockerfile|api|.
+  - ./frontend/Dockerfile|frontend|./frontend
+```
+
+#### `deploy-kustomize`
+
+```yaml
+deploy-kustomize:
+  namespace: myapp
+  kustomize-path: k8s/prod    # default: k8s/prod
+
+  # Single deployment:
+  deployment: myapp
+  image: myapp
+
+  # Or multiple deployments:
+  deployments:
+    - deployment: api
+      image: api
+      container: api
+    - deployment: frontend
+      image: frontend
+      container: frontend
+```
+
+#### `deploy-helm`
+
+```yaml
+deploy-helm:
+  namespace: myapp
+  release: myapp              # default: namespace
+  chart: oci://registry/charts/myapp
+  chart-version: "1.0.0"     # optional
+  values-file: values.yaml   # default: values.yaml
+```
+
+### Global Settings
+
+Set at the top level to override defaults:
+
+```yaml
+registry: my-registry.example.com/org
+timeout-minutes: 30
+submodules: false
+dotnet-channel: "9.0"
+
+test-dotnet: {}
+build-images:
+  - ./Dockerfile|app|.
+```
+
+### Example: Full Stack App
+
+```yaml
+test-dotnet:
+  docker-compose: auto
+
+test-node:
+  working-directory: frontend
+
+build-images:
+  - ./backend/Dockerfile|api|.
+  - ./frontend/Dockerfile|frontend|./frontend
+
+deploy-kustomize:
+  namespace: myapp
+  kustomize-path: k8s/prod
+  deployments:
+    - deployment: api
+      image: api
+      container: api
+    - deployment: frontend
+      image: frontend
+      container: frontend
+```
+
+### Job Dependencies
+
+The generator automatically wires `needs:` between jobs:
+- **build-images** needs all test jobs
+- **deploy** needs build-images (or test jobs if no build)

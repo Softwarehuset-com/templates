@@ -18,8 +18,7 @@
 #         namespace: argocd
 #         version: "7.7.16"
 #         values_file: manifests/argocd/values.yaml
-#       secrets:
-#         KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+# Secrets (KUBE_CONFIG) are inherited automatically in Forgejo.
 # =============================================================================
 
 name: Helm Deploy
@@ -67,9 +66,8 @@ on:
         required: false
         type: string
         default: "5m"
-    secrets:
-      KUBE_CONFIG:
-        required: true
+    # NOTE: Forgejo does not support 'secrets' in workflow_call.
+    # Secrets are inherited automatically from the calling workflow.
 
 jobs:
   deploy:

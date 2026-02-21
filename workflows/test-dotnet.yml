@@ -22,7 +22,7 @@ jobs:
 
       - name: Setup .NET
         run: |
-          curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 9.0
+          curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10
           echo "$HOME/.dotnet" >> $GITHUB_PATH
 
       - name: Start services
