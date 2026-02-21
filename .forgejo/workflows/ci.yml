@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    uses: ./.forgejo/workflows/test-dotnet.yml
+    uses: softwarehuset/templates/.forgejo/workflows/test-dotnet.yml@feat/ci-generator
     # All defaults apply:
     # - auto-detects samples/dotnet-api/SampleApi.sln
     # - auto-detects docker-compose.yml
