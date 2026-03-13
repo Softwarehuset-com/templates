@@ -37,8 +37,9 @@ jobs:
           export REGISTRY="code.core.ci/softwarehuset"
 
           cd "${{ inputs.kustomize-path }}"
-          kubectl kustomize . | envsubst | kubectl apply -n "${{ inputs.namespace }}" -f -
+          kubectl kustomize . | envsubst '${TAG} ${REGISTRY}' | kubectl apply -n "${{ inputs.namespace }}" -f -
 
-          kubectl get deployments -n "${{ inputs.namespace }}" -o name | while read -r dep; do
-            kubectl rollout status -n "${{ inputs.namespace }}" $dep --timeout=300s
+          DEPS=$(kubectl get deployments -n "${{ inputs.namespace }}" -o name)
+          for dep in $DEPS; do
+            kubectl rollout status -n "${{ inputs.namespace }}" "$dep" --timeout=300s
           done
