@@ -7,26 +7,10 @@ on:
         description: "Kubernetes namespace"
         type: string
         required: true
-      deployment:
-        description: "Deployment name to update"
-        type: string
-        required: true
-      image:
-        description: "Image name (without registry prefix)"
-        type: string
-        required: true
       kustomize-path:
         description: "Path to kustomization directory"
         type: string
         default: "k8s/prod"
-      registry:
-        description: "Container registry"
-        type: string
-        default: "code.core.ci/softwarehuset"
-      tag:
-        description: "Image tag (empty = git sha short)"
-        type: string
-        default: ""
 
 jobs:
   deploy:
@@ -49,17 +33,12 @@ jobs:
 
       - name: Deploy
         run: |
-          TAG="${{ inputs.tag }}"
-          if [ -z "$TAG" ]; then
-            TAG=$(echo "${{ github.sha }}" | head -c 7)
-          fi
-
-          FULL_IMAGE="${{ inputs.registry }}/${{ inputs.image }}:${TAG}"
+          export TAG=$(echo "${{ github.sha }}" | head -c 7)
+          export REGISTRY="code.core.ci/softwarehuset"
 
           cd "${{ inputs.kustomize-path }}"
-          kubectl kustomize . | kubectl apply -n "${{ inputs.namespace }}" -f -
-          kubectl set image -n "${{ inputs.namespace }}" \
-            deployment/${{ inputs.deployment }} \
-            ${{ inputs.deployment }}="${FULL_IMAGE}"
-          kubectl rollout status -n "${{ inputs.namespace }}" \
-            deployment/${{ inputs.deployment }} --timeout=300s
+          kubectl kustomize . | envsubst | kubectl apply -n "${{ inputs.namespace }}" -f -
+
+          kubectl get deployments -n "${{ inputs.namespace }}" -o name | while read -r dep; do
+            kubectl rollout status -n "${{ inputs.namespace }}" $dep --timeout=300s
+          done
