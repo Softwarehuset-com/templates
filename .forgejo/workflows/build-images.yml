@@ -19,6 +19,10 @@ on:
         description: "Push images to registry"
         type: boolean
         default: true
+      submodules:
+        description: "Checkout with submodules"
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -27,6 +31,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules }}
 
       - name: Login to registry
         if: ${{ inputs.push }}
