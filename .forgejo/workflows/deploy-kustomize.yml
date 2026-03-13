@@ -39,5 +39,6 @@ jobs:
           cd "${{ inputs.kustomize-path }}"
           kubectl kustomize . | envsubst '${TAG} ${REGISTRY}' | kubectl apply -n "${{ inputs.namespace }}" -f -
 
+          echo "[deploy-kustomize v5] template loaded"
           echo "Waiting for rollout in ${{ inputs.namespace }}..."
-          kubectl get deploy -n "${{ inputs.namespace }}" -o name | xargs -I{} kubectl rollout status {} -n "${{ inputs.namespace }}" --timeout=300s
+          kubectl wait --for=condition=Available deployment --all -n "${{ inputs.namespace }}" --timeout=300s
