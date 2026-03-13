@@ -37,7 +37,7 @@ jobs:
           export REGISTRY="code.core.ci/softwarehuset"
 
           cd "${{ inputs.kustomize-path }}"
-          kubectl kustomize . | envsubst '${TAG} ${REGISTRY}' | kubectl apply -n "${{ inputs.namespace }}" -f -
+          kubectl kustomize . | sed "s|\${TAG}|${TAG}|g; s|\${REGISTRY}|${REGISTRY}|g" | kubectl apply -n "${{ inputs.namespace }}" -f -
 
           echo "[deploy-kustomize v5] template loaded"
           echo "Waiting for rollout in ${{ inputs.namespace }}..."
