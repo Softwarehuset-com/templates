@@ -39,7 +39,7 @@ jobs:
           cd "${{ inputs.kustomize-path }}"
           kubectl kustomize . | envsubst '${TAG} ${REGISTRY}' | kubectl apply -n "${{ inputs.namespace }}" -f -
 
-          DEPS=$(kubectl get deployments -n "${{ inputs.namespace }}" -o name)
-          for dep in $DEPS; do
-            kubectl rollout status -n "${{ inputs.namespace }}" "$dep" --timeout=300s
+          for dep in $(kubectl get deploy -n "${{ inputs.namespace }}" -o jsonpath='{.items[*].metadata.name}'); do
+            echo "Waiting for deployment/$dep..."
+            kubectl rollout status "deployment/$dep" -n "${{ inputs.namespace }}" --timeout=300s
           done
