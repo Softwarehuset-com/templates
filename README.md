@@ -9,7 +9,7 @@ Reusable CI/CD workflows for Forgejo. Other repos call these via `uses:` — no 
 | `test-dotnet.yml` | .NET restore → build → test with auto-detection |
 | `test-node.yml` | Node.js install → npm/yarn/pnpm test |
 | `test-python.yml` | Python pip install → pytest |
-| `test-e2e-dotnet-playwright.yml` | .NET + Playwright E2E (browser install + retry on flake) |
+| `test-e2e-dotnet-playwright.yml` | .NET E2E run inside `mcr.microsoft.com/playwright/dotnet` (browsers + system deps preinstalled, no host-side .NET install) |
 | `build-images.yml` | Build and push Docker images |
 | `scan-images.yml` | Build Docker images and run a Trivy vulnerability scan (CRITICAL by default) |
 | `secret-scan.yml` | Scan repository contents for committed secrets via gitleaks |
@@ -158,10 +158,21 @@ jobs:
       project-path: backend/MyApp.E2E.Tests/MyApp.E2E.Tests.csproj
       backend-url: https://my-app.example.com
       frontend-url: https://my-app.example.com
-      # retries: 1   (default — one retry, two attempts total)
-      # browser: chromium  (default; or firefox/webkit/all)
+      # retries: 1                                                (default — one retry, two attempts total)
+      # playwright-image: mcr.microsoft.com/playwright/dotnet:next-noble  (default)
     secrets: inherit
 ```
+
+The job runs `dotnet test` **inside `mcr.microsoft.com/playwright/dotnet`** —
+that image already contains the .NET SDK, the Playwright runtime, every
+supported browser (Chromium, Firefox, WebKit), and their Linux system
+dependencies. Nothing is installed on the runner.
+
+Default tag is `next-noble` because every published `vX.Y.Z-noble` tag
+through `v1.59.0-noble` is built on `dotnet/sdk:8.0-noble`, and most
+softwarehuset E2E projects target `net10.0`. Override `playwright-image`
+to pin to a specific tag once Playwright cuts a stable `v1.60+-noble` (which
+will ship .NET 10 SDK).
 
 ### Deploy (Helm)
 
