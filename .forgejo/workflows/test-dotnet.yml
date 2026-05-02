@@ -57,12 +57,18 @@ jobs:
             docker compose up -d
             # Wait for services to be ready
             sleep 5
-            # If postgres is present, wait for it
+            # If postgres is present, wait for it and detect random port
             if docker compose ps | grep -q postgres; then
               for i in $(seq 1 30); do
                 docker compose exec -T postgres pg_isready 2>/dev/null && break
                 sleep 2
               done
+              # Detect the random host port mapped to postgres 5432
+              PG_PORT=$(docker compose port postgres 5432 | cut -d: -f2)
+              if [ -n "$PG_PORT" ]; then
+                echo "pg_port=$PG_PORT" >> $GITHUB_OUTPUT
+                echo "Postgres available on host port: $PG_PORT"
+              fi
             fi
           else
             echo "compose_found=false" >> $GITHUB_OUTPUT
@@ -96,6 +102,12 @@ jobs:
           FILTER_FLAG=""
           if [ -n "$FILTER" ]; then
             FILTER_FLAG="--filter \"$FILTER\""
+          fi
+          # Override connection string with detected random port if available
+          PG_PORT="${{ steps.docker.outputs.pg_port }}"
+          if [ -n "$PG_PORT" ]; then
+            export ConnectionStrings__DefaultConnection="Host=localhost;Port=${PG_PORT};Database=sampledb;Username=testuser;Password=testpass"
+            echo "Using postgres on random port: $PG_PORT"
           fi
           eval $HOME/.dotnet/dotnet test "${{ steps.solution.outputs.path }}" --no-build --verbosity normal $FILTER_FLAG
 
