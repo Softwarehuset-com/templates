@@ -7,10 +7,6 @@ on:
         description: "Path to the E2E .csproj"
         type: string
         required: true
-      dotnet-channel:
-        description: ".NET channel"
-        type: string
-        default: "10.0"
       test-filter:
         description: "dotnet test filter"
         type: string
@@ -31,63 +27,66 @@ on:
         description: "Checkout with submodules"
         type: boolean
         default: true
-      browser:
-        description: "Playwright browser to install (chromium, firefox, webkit, all)"
+      playwright-image:
+        description: |
+          Image used to run dotnet test. Must have a .NET SDK that can build
+          the project AND the Playwright runtime + browsers + Linux system deps
+          preinstalled. Default tracks Playwright's main (currently the only
+          tag built on dotnet/sdk:10.0-noble — every published vX.Y.Z-noble
+          through v1.59 ships .NET 8 SDK only). Pin to v1.60+-noble once
+          Playwright cuts a stable release with .NET 10 SDK.
         type: string
-        default: "chromium"
+        default: "mcr.microsoft.com/playwright/dotnet:next-noble"
 
 jobs:
   e2e:
     name: test-e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: ${{ inputs.submodules }}
           token: ${{ secrets.FORGEJO_TOKEN }}
 
-      - name: Setup .NET
-        run: |
-          set -euo pipefail
-          curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel ${{ inputs.dotnet-channel }} --install-dir $HOME/.dotnet
-          echo "$HOME/.dotnet" >> $GITHUB_PATH
-          # Microsoft.Playwright.CLI (and dotnet-tool global tools generally) need
-          # DOTNET_ROOT to find the runtime — without it the tool dies with
-          # "You must install .NET to run this application."
-          echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
-
-      - name: Restore + Build
-        run: |
-          set -euo pipefail
-          ~/.dotnet/dotnet restore "${{ inputs.project-path }}"
-          ~/.dotnet/dotnet build "${{ inputs.project-path }}" --no-restore
-
-      - name: Install Playwright browsers
-        run: |
-          set -euo pipefail
-          # The runner image (catthehacker/ubuntu) doesn't ship pwsh, so we
-          # invoke the Microsoft.Playwright.CLI global tool directly instead
-          # of the playwright.ps1 wrapper.
-          ~/.dotnet/dotnet tool install --global Microsoft.Playwright.CLI || true
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          playwright install --with-deps ${{ inputs.browser }}
-
-      - name: Run E2E tests
+      - name: Run E2E tests in Playwright image
         env:
-          E2E_BACKEND_URL: ${{ inputs.backend-url }}
-          E2E_FRONTEND_URL: ${{ inputs.frontend-url }}
+          IMAGE: ${{ inputs.playwright-image }}
           PROJECT: ${{ inputs.project-path }}
           FILTER: ${{ inputs.test-filter }}
           RETRIES: ${{ inputs.retries }}
+          E2E_BACKEND_URL: ${{ inputs.backend-url }}
+          E2E_FRONTEND_URL: ${{ inputs.frontend-url }}
         run: |
           set -euo pipefail
 
+          # Pull explicitly so image-fetch time isn't billed to (or pushed past
+          # the timeout of) the first test attempt.
+          docker pull "$IMAGE"
+
+          # The Forgejo runner already executes inside a container and mounts
+          # /workspace from the host into the same path; binding $PWD here
+          # therefore resolves to the *host* path that the docker daemon needs.
+          # --network host  → tests can reach backend-url / frontend-url without
+          #                   an extra docker network hop or DNS setup.
+          # --ipc host      → Playwright recommendation: Chromium uses shared
+          #                   memory for IPC and the default 64 MB /dev/shm
+          #                   inside a container makes it crash with
+          #                   Target.crashed errors after a page or two.
           attempt=1
           max=$((RETRIES + 1))
           while [ "$attempt" -le "$max" ]; do
-            echo "::group::E2E attempt $attempt/$max"
-            if ~/.dotnet/dotnet test "$PROJECT" --no-build --verbosity normal --filter "$FILTER"; then
+            echo "::group::E2E attempt $attempt/$max — image=$IMAGE"
+            if docker run --rm \
+                  --network host \
+                  --ipc host \
+                  -v "$PWD:/work" -w /work \
+                  -e E2E_BACKEND_URL \
+                  -e E2E_FRONTEND_URL \
+                  -e DOTNET_NOLOGO=1 \
+                  -e DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+                  "$IMAGE" \
+                  dotnet test "$PROJECT" --filter "$FILTER" --verbosity normal; then
               if [ "$attempt" -gt 1 ]; then
                 echo "::warning::E2E was flaky but passed on attempt $attempt"
               fi
