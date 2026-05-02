@@ -92,7 +92,11 @@ jobs:
 
       - name: Upload SARIF
         if: always() && inputs.upload-sarif
-        uses: actions/upload-artifact@v4
+        # Forgejo Actions doesn't support @actions/artifact v2.x — that's
+        # actions/upload-artifact@v4+ and actions/download-artifact@v4+, both
+        # blocked with `GHESNotSupportedError`. Stay on @v3 (which uses
+        # @actions/artifact v1) until Forgejo ships v2 support.
+        uses: actions/upload-artifact@v3
         with:
           name: trivy-sarif-reports
           path: 'trivy-*.sarif'
