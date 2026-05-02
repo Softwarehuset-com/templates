@@ -1,0 +1,102 @@
+name: test-e2e-dotnet-playwright
+
+on:
+  workflow_call:
+    inputs:
+      project-path:
+        description: "Path to the E2E .csproj"
+        type: string
+        required: true
+      dotnet-channel:
+        description: ".NET channel"
+        type: string
+        default: "10.0"
+      test-filter:
+        description: "dotnet test filter"
+        type: string
+        default: "Category=E2E"
+      backend-url:
+        description: "E2E_BACKEND_URL env var passed to the test run"
+        type: string
+        required: true
+      frontend-url:
+        description: "E2E_FRONTEND_URL env var"
+        type: string
+        required: true
+      retries:
+        description: "Re-runs after the first failure (1 = two attempts total)"
+        type: number
+        default: 1
+      submodules:
+        description: "Checkout with submodules"
+        type: boolean
+        default: true
+      browser:
+        description: "Playwright browser to install (chromium, firefox, webkit, all)"
+        type: string
+        default: "chromium"
+
+jobs:
+  e2e:
+    name: test-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules }}
+          token: ${{ secrets.FORGEJO_TOKEN }}
+
+      - name: Setup .NET
+        run: |
+          set -euo pipefail
+          curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel ${{ inputs.dotnet-channel }} --install-dir $HOME/.dotnet
+          echo "$HOME/.dotnet" >> $GITHUB_PATH
+          # Microsoft.Playwright.CLI (and dotnet-tool global tools generally) need
+          # DOTNET_ROOT to find the runtime — without it the tool dies with
+          # "You must install .NET to run this application."
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+
+      - name: Restore + Build
+        run: |
+          set -euo pipefail
+          ~/.dotnet/dotnet restore "${{ inputs.project-path }}"
+          ~/.dotnet/dotnet build "${{ inputs.project-path }}" --no-restore
+
+      - name: Install Playwright browsers
+        run: |
+          set -euo pipefail
+          # The runner image (catthehacker/ubuntu) doesn't ship pwsh, so we
+          # invoke the Microsoft.Playwright.CLI global tool directly instead
+          # of the playwright.ps1 wrapper.
+          ~/.dotnet/dotnet tool install --global Microsoft.Playwright.CLI || true
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          playwright install --with-deps ${{ inputs.browser }}
+
+      - name: Run E2E tests
+        env:
+          E2E_BACKEND_URL: ${{ inputs.backend-url }}
+          E2E_FRONTEND_URL: ${{ inputs.frontend-url }}
+          PROJECT: ${{ inputs.project-path }}
+          FILTER: ${{ inputs.test-filter }}
+          RETRIES: ${{ inputs.retries }}
+        run: |
+          set -euo pipefail
+
+          attempt=1
+          max=$((RETRIES + 1))
+          while [ "$attempt" -le "$max" ]; do
+            echo "::group::E2E attempt $attempt/$max"
+            if ~/.dotnet/dotnet test "$PROJECT" --no-build --verbosity normal --filter "$FILTER"; then
+              if [ "$attempt" -gt 1 ]; then
+                echo "::warning::E2E was flaky but passed on attempt $attempt"
+              fi
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            attempt=$((attempt + 1))
+          done
+
+          echo "E2E failed after $max attempts."
+          exit 1

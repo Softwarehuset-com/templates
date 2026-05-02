@@ -1,0 +1,98 @@
+name: scan-images
+
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: "Images to scan (one per line: dockerfile|image-name|context — same format as build-images.yml)"
+        type: string
+        required: true
+      severity:
+        description: "Severity threshold for failure (CRITICAL, HIGH, MEDIUM, LOW; comma-separate for multiple)"
+        type: string
+        default: "CRITICAL"
+      ignore-unfixed:
+        description: "Ignore vulnerabilities without an upstream fix"
+        type: boolean
+        default: true
+      upload-sarif:
+        description: "Upload per-image SARIF reports as artifacts"
+        type: boolean
+        default: false
+      submodules:
+        description: "Checkout with submodules"
+        type: boolean
+        default: false
+      trivy-version:
+        description: "Trivy version (empty = apt latest, e.g. 0.69.1)"
+        type: string
+        default: ""
+
+jobs:
+  scan:
+    name: scan-images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules }}
+
+      - name: Install Trivy
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.trivy-version }}" ]; then
+            v="${{ inputs.trivy-version }}"
+            curl -sfL "https://github.com/aquasecurity/trivy/releases/download/v${v}/trivy_${v}_Linux-64bit.deb" -o /tmp/trivy.deb
+            sudo dpkg -i /tmp/trivy.deb
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq wget apt-transport-https gnupg lsb-release
+            wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+            echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq trivy
+          fi
+          trivy --version
+
+      - name: Build & scan images
+        run: |
+          set -euo pipefail
+          ignore_unfixed=""
+          [ "${{ inputs.ignore-unfixed }}" = "true" ] && ignore_unfixed="--ignore-unfixed"
+
+          echo "${{ inputs.images }}" | grep -v '^[[:space:]]*$' | while IFS='|' read -r dockerfile image context; do
+            dockerfile=$(echo "$dockerfile" | xargs)
+            image=$(echo "$image" | xargs)
+            context=$(echo "$context" | xargs)
+            [ -z "$dockerfile" ] && continue
+
+            tag="${image}:scan"
+            echo "::group::Build $tag"
+            docker build -f "$dockerfile" -t "$tag" "$context"
+            echo "::endgroup::"
+
+            echo "::group::Scan $tag (severity=${{ inputs.severity }})"
+            trivy image --exit-code 1 --severity "${{ inputs.severity }}" $ignore_unfixed --format table "$tag"
+            echo "::endgroup::"
+          done
+
+      - name: Generate SARIF reports
+        if: always() && inputs.upload-sarif
+        run: |
+          set -euo pipefail
+          ignore_unfixed=""
+          [ "${{ inputs.ignore-unfixed }}" = "true" ] && ignore_unfixed="--ignore-unfixed"
+
+          echo "${{ inputs.images }}" | grep -v '^[[:space:]]*$' | while IFS='|' read -r dockerfile image context; do
+            image=$(echo "$image" | xargs)
+            [ -z "$image" ] && continue
+            trivy image --severity "${{ inputs.severity }}" $ignore_unfixed --format sarif -o "trivy-${image}.sarif" "${image}:scan" || true
+          done
+
+      - name: Upload SARIF
+        if: always() && inputs.upload-sarif
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-sarif-reports
+          path: 'trivy-*.sarif'
