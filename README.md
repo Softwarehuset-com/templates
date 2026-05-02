@@ -13,6 +13,7 @@ Reusable CI/CD workflows for Forgejo. Other repos call these via `uses:` — no 
 | `build-images.yml` | Build and push Docker images |
 | `scan-images.yml` | Build Docker images and run a Trivy vulnerability scan (CRITICAL by default) |
 | `secret-scan.yml` | Scan repository contents for committed secrets via gitleaks |
+| `schema-drift-graphql.yml` | Re-export GraphQL schema from a .NET backend, regenerate the typed frontend client, fail on drift |
 | `deploy-kustomize.yml` | Deploy via kubectl + kustomize |
 | `deploy-helm.yml` | Deploy via Helm upgrade --install |
 
@@ -121,6 +122,27 @@ jobs:
         ./frontend/Dockerfile|my-frontend|./frontend
       severity: "CRITICAL"     # default
       upload-sarif: true       # default false
+```
+
+### Schema drift (.NET GraphQL → typed frontend client)
+
+Catches FE/BE drift before merge: re-exports the schema from a .NET backend,
+regenerates the typed frontend client, and fails if either committed file is
+out of date. All installs are shell-based (no node24 third-party setup
+actions, which Forgejo Actions doesn't support yet).
+
+```yaml
+jobs:
+  schema-drift:
+    needs: [test-backend]
+    runs-on: ubuntu-latest
+    uses: softwarehuset/templates/.forgejo/workflows/schema-drift-graphql.yml@main
+    with:
+      backend-project: backend/MyApp.Api/MyApp.Api.csproj
+      # frontend-dir: frontend          (default)
+      # package-manager: bun            (default; or npm/pnpm/yarn)
+      # schema-output: schema.graphql   (default — diffed automatically)
+      # drift-paths: frontend/src/gql/  (default — additional paths to diff)
 ```
 
 ### E2E (.NET + Playwright)
