@@ -1,0 +1,159 @@
+name: schema-drift-graphql
+
+# Re-export the GraphQL schema from a .NET backend, regenerate the typed
+# frontend client, and fail if either committed file is stale (or if the
+# regen surfaces any unresolved field references). Catches FE/BE GraphQL
+# drift before merge instead of in the browser.
+#
+# All installs are shell-based — Forgejo Actions can't run node24-based
+# third-party setup actions (`actions/setup-dotnet@v4`, `oven-sh/setup-bun@v2`,
+# etc.) so this template uses the same dotnet-install.sh + bun curl-installer
+# pattern that the rest of softwarehuset/templates relies on.
+
+on:
+  workflow_call:
+    inputs:
+      backend-project:
+        description: "Path to the .NET project that exports the schema (e.g. backend/MyApp.Api/MyApp.Api.csproj)"
+        type: string
+        required: true
+      schema-output:
+        description: "Where the backend writes the schema (also the path that's diffed)"
+        type: string
+        default: "schema.graphql"
+      schema-export-args:
+        description: "Args appended after `dotnet run --project <backend-project> --` to trigger the export. Default writes to <schema-output>."
+        type: string
+        default: ""
+      frontend-dir:
+        description: "Working directory containing package.json + codegen config"
+        type: string
+        default: "frontend"
+      package-manager:
+        description: "Frontend package manager (bun, npm, pnpm, yarn)"
+        type: string
+        default: "bun"
+      install-cmd:
+        description: "Override for the install command (empty = sensible default per package-manager)"
+        type: string
+        default: ""
+      codegen-cmd:
+        description: "Override for the codegen command (empty = `<package-manager> run codegen`)"
+        type: string
+        default: ""
+      drift-paths:
+        description: "Space-separated paths to `git diff --exit-code` after regen. The schema-output path is always included."
+        type: string
+        default: "frontend/src/gql/"
+      dotnet-channel:
+        description: ".NET channel to install"
+        type: string
+        default: "10.0"
+      submodules:
+        description: "Checkout with submodules"
+        type: boolean
+        default: false
+
+jobs:
+  drift:
+    name: schema-drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules }}
+
+      - name: Install .NET
+        run: |
+          set -euo pipefail
+          curl -sSL https://dot.net/v1/dotnet-install.sh \
+            | bash -s -- --channel ${{ inputs.dotnet-channel }} --install-dir $HOME/.dotnet
+          echo "$HOME/.dotnet" >> $GITHUB_PATH
+          # Tools (dotnet-tool global tools, codegen helpers) need DOTNET_ROOT
+          # to find the runtime — without it they die with
+          # "You must install .NET to run this application."
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+
+      - name: Install ${{ inputs.package-manager }}
+        env:
+          PM: ${{ inputs.package-manager }}
+        run: |
+          set -euo pipefail
+          case "$PM" in
+            bun)
+              curl -fsSL https://bun.sh/install | bash
+              echo "$HOME/.bun/bin" >> $GITHUB_PATH
+              ;;
+            pnpm)
+              curl -fsSL https://get.pnpm.io/install.sh | env SHELL=bash sh -
+              echo "$HOME/.local/share/pnpm" >> $GITHUB_PATH
+              ;;
+            npm|yarn)
+              # Both ride along with Node — install Node 20 (latest the runner
+              # supports) via the same NodeSource pattern test-node.yml uses.
+              curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+              sudo apt-get install -y nodejs
+              if [ "$PM" = "yarn" ]; then
+                npm install -g yarn
+              fi
+              ;;
+            *)
+              echo "::error::Unknown package-manager '$PM' (expected: bun, npm, pnpm, yarn)"
+              exit 1
+              ;;
+          esac
+
+      - name: Export schema from backend
+        env:
+          PROJECT: ${{ inputs.backend-project }}
+          OUTPUT: ${{ inputs.schema-output }}
+          EXTRA: ${{ inputs.schema-export-args }}
+        run: |
+          set -euo pipefail
+          if [ -z "$EXTRA" ]; then
+            EXTRA="--export-schema $(pwd)/$OUTPUT"
+          fi
+          ~/.dotnet/dotnet run --project "$PROJECT" -- $EXTRA
+
+      - name: Run frontend codegen
+        working-directory: ${{ inputs.frontend-dir }}
+        env:
+          PM: ${{ inputs.package-manager }}
+          INSTALL: ${{ inputs.install-cmd }}
+          CODEGEN: ${{ inputs.codegen-cmd }}
+        run: |
+          set -euo pipefail
+          if [ -z "$INSTALL" ]; then
+            case "$PM" in
+              bun)  INSTALL="bun install --frozen-lockfile" ;;
+              pnpm) INSTALL="pnpm install --frozen-lockfile" ;;
+              npm)  INSTALL="npm ci" ;;
+              yarn) INSTALL="yarn install --immutable" ;;
+            esac
+          fi
+          if [ -z "$CODEGEN" ]; then
+            CODEGEN="$PM run codegen"
+          fi
+          echo "::group::install"
+          eval "$INSTALL"
+          echo "::endgroup::"
+          echo "::group::codegen"
+          eval "$CODEGEN"
+          echo "::endgroup::"
+
+      - name: Fail on schema or generated-client drift
+        env:
+          OUTPUT: ${{ inputs.schema-output }}
+          EXTRA_PATHS: ${{ inputs.drift-paths }}
+        run: |
+          set -euo pipefail
+          paths=("$OUTPUT")
+          # shellcheck disable=SC2206
+          paths+=($EXTRA_PATHS)
+          if ! git diff --exit-code -- "${paths[@]}"; then
+            echo "::error::Schema or generated client is out of date — re-run the export + codegen locally and commit the result."
+            echo "  ~/.dotnet/dotnet run --project ${{ inputs.backend-project }} -- --export-schema \$(pwd)/${{ inputs.schema-output }}"
+            echo "  cd ${{ inputs.frontend-dir }} && ${{ inputs.package-manager }} run codegen"
+            exit 1
+          fi
