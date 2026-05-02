@@ -50,8 +50,12 @@ jobs:
       - name: Setup .NET
         run: |
           set -euo pipefail
-          curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel ${{ inputs.dotnet-channel }}
+          curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel ${{ inputs.dotnet-channel }} --install-dir $HOME/.dotnet
           echo "$HOME/.dotnet" >> $GITHUB_PATH
+          # Microsoft.Playwright.CLI (and dotnet-tool global tools generally) need
+          # DOTNET_ROOT to find the runtime — without it the tool dies with
+          # "You must install .NET to run this application."
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
 
       - name: Restore + Build
         run: |
