@@ -9,7 +9,10 @@ Reusable CI/CD workflows for Forgejo. Other repos call these via `uses:` — no 
 | `test-dotnet.yml` | .NET restore → build → test with auto-detection |
 | `test-node.yml` | Node.js install → npm/yarn/pnpm test |
 | `test-python.yml` | Python pip install → pytest |
+| `test-e2e-dotnet-playwright.yml` | .NET + Playwright E2E (browser install + retry on flake) |
 | `build-images.yml` | Build and push Docker images |
+| `scan-images.yml` | Build Docker images and run a Trivy vulnerability scan (CRITICAL by default) |
+| `secret-scan.yml` | Scan repository contents for committed secrets via gitleaks |
 | `deploy-kustomize.yml` | Deploy via kubectl + kustomize |
 | `deploy-helm.yml` | Deploy via Helm upgrade --install |
 
@@ -91,6 +94,51 @@ jobs:
       namespace: production
       deployment: my-api
       image: my-api
+```
+
+### Secret Scan (gitleaks)
+
+```yaml
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    uses: softwarehuset/templates/.forgejo/workflows/secret-scan.yml@main
+    # Defaults: gitleaks v8.21.2, .gitleaks.toml if present, scans the whole tree.
+```
+
+### Image Scan (Trivy)
+
+```yaml
+jobs:
+  image-scan:
+    needs: [docker]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    uses: softwarehuset/templates/.forgejo/workflows/scan-images.yml@main
+    with:
+      images: |
+        ./backend/Dockerfile|my-api|.
+        ./frontend/Dockerfile|my-frontend|./frontend
+      severity: "CRITICAL"     # default
+      upload-sarif: true       # default false
+```
+
+### E2E (.NET + Playwright)
+
+```yaml
+jobs:
+  test-e2e:
+    needs: [docker]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    uses: softwarehuset/templates/.forgejo/workflows/test-e2e-dotnet-playwright.yml@main
+    with:
+      project-path: backend/MyApp.E2E.Tests/MyApp.E2E.Tests.csproj
+      backend-url: https://my-app.example.com
+      frontend-url: https://my-app.example.com
+      # retries: 1   (default — one retry, two attempts total)
+      # browser: chromium  (default; or firefox/webkit/all)
+    secrets: inherit
 ```
 
 ### Deploy (Helm)
