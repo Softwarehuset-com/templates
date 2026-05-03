@@ -75,11 +75,23 @@ jobs:
           # "You must install .NET to run this application."
           echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
 
-      - name: Install ${{ inputs.package-manager }}
+      - name: Install ${{ inputs.package-manager }} (+ Node 20)
         env:
           PM: ${{ inputs.package-manager }}
         run: |
           set -euo pipefail
+
+          # Even when the project uses bun/pnpm, codegen tools like
+          # graphql-codegen are JS bins with `#!/usr/bin/env node` shebangs —
+          # they spawn whatever `node` is on PATH, not the package-manager's
+          # own runtime. The catthehacker runner image ships Node 18 by
+          # default and `listr2` (transitive dep of graphql-codegen) needs
+          # `styleText` from `node:util`, added in Node 20.12. So always
+          # install Node 20 first, then layer the chosen package manager.
+          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+          node --version
+
           case "$PM" in
             bun)
               curl -fsSL https://bun.sh/install | bash
@@ -89,14 +101,11 @@ jobs:
               curl -fsSL https://get.pnpm.io/install.sh | env SHELL=bash sh -
               echo "$HOME/.local/share/pnpm" >> $GITHUB_PATH
               ;;
-            npm|yarn)
-              # Both ride along with Node — install Node 20 (latest the runner
-              # supports) via the same NodeSource pattern test-node.yml uses.
-              curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-              sudo apt-get install -y nodejs
-              if [ "$PM" = "yarn" ]; then
-                npm install -g yarn
-              fi
+            npm)
+              # Already installed with Node 20 above.
+              ;;
+            yarn)
+              npm install -g yarn
               ;;
             *)
               echo "::error::Unknown package-manager '$PM' (expected: bun, npm, pnpm, yarn)"
