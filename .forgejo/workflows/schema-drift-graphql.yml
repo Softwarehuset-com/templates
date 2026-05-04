@@ -88,9 +88,27 @@ jobs:
           # default and `listr2` (transitive dep of graphql-codegen) needs
           # `styleText` from `node:util`, added in Node 20.12. So always
           # install Node 20 first, then layer the chosen package manager.
+          #
+          # NOTE: the catthehacker runner-latest image ships Node 18 at
+          # /usr/local/bin/node, which precedes the /usr/bin/node that
+          # NodeSource's apt package installs to. Without explicitly
+          # overriding /usr/local/bin/node, `node --version` still reports
+          # v18.x even after `apt-get install -y nodejs` succeeds — and
+          # graphql-codegen then dies on `styleText` from `node:util`.
+          # So: install via NodeSource AND replace /usr/local/bin/node so
+          # nothing on PATH resolves to the old Node 18.
           curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
           sudo apt-get install -y nodejs
+          # Override any pre-existing /usr/local/bin/node{,npm,npx} that
+          # would shadow the freshly installed Node 20.
+          for bin in node npm npx; do
+            if [ -x "/usr/bin/$bin" ]; then
+              sudo ln -sf "/usr/bin/$bin" "/usr/local/bin/$bin"
+            fi
+          done
+          # Sanity-check: must be >= 20.12 for `styleText` from node:util.
           node --version
+          node -e 'const {styleText}=require("node:util"); if(!styleText){process.exit(1)}'
 
           case "$PM" in
             bun)
