@@ -84,31 +84,37 @@ jobs:
           # Even when the project uses bun/pnpm, codegen tools like
           # graphql-codegen are JS bins with `#!/usr/bin/env node` shebangs —
           # they spawn whatever `node` is on PATH, not the package-manager's
-          # own runtime. The catthehacker runner image ships Node 18 by
-          # default and `listr2` (transitive dep of graphql-codegen) needs
-          # `styleText` from `node:util`, added in Node 20.12. So always
-          # install Node 20 first, then layer the chosen package manager.
+          # own runtime. The catthehacker runner image ships Node 18 in
+          # /opt/hostedtoolcache/node and prepends it to PATH via
+          # $GITHUB_PATH, so a plain NodeSource apt install (writes to
+          # /usr/bin/node) gets shadowed and `node --version` still reports
+          # v18.x. graphql-codegen's listr2 dep then dies on `styleText`
+          # from `node:util` (added in Node 20.12).
           #
-          # NOTE: the catthehacker runner-latest image ships Node 18 at
-          # /usr/local/bin/node, which precedes the /usr/bin/node that
-          # NodeSource's apt package installs to. Without explicitly
-          # overriding /usr/local/bin/node, `node --version` still reports
-          # v18.x even after `apt-get install -y nodejs` succeeds — and
-          # graphql-codegen then dies on `styleText` from `node:util`.
-          # So: install via NodeSource AND replace /usr/local/bin/node so
-          # nothing on PATH resolves to the old Node 18.
+          # Strategy: install Node 20 via NodeSource so /usr/bin/{node,npm,npx}
+          # exist, then (a) symlink /usr/local/bin/{node,npm,npx} -> /usr/bin
+          # for any layout that prefers it, (b) replace every
+          # /opt/hostedtoolcache/node/*/bin/{node,npm,npx} the runner image
+          # bundled, and (c) prepend /usr/bin to $GITHUB_PATH so subsequent
+          # steps see the freshly installed Node 20 first.
           curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
           sudo apt-get install -y nodejs
-          # Override any pre-existing /usr/local/bin/node{,npm,npx} that
-          # would shadow the freshly installed Node 20.
           for bin in node npm npx; do
-            if [ -x "/usr/bin/$bin" ]; then
-              sudo ln -sf "/usr/bin/$bin" "/usr/local/bin/$bin"
-            fi
+            sudo ln -sf "/usr/bin/$bin" "/usr/local/bin/$bin"
           done
-          # Sanity-check: must be >= 20.12 for `styleText` from node:util.
-          node --version
-          node -e 'const {styleText}=require("node:util"); if(!styleText){process.exit(1)}'
+          for d in /opt/hostedtoolcache/node/*/x64/bin /opt/hostedtoolcache/node/*/*/bin; do
+            for bin in node npm npx; do
+              if [ -e "$d/$bin" ]; then
+                sudo rm -f "$d/$bin"
+                sudo ln -sf "/usr/bin/$bin" "$d/$bin"
+              fi
+            done
+          done
+          echo "/usr/bin" >> $GITHUB_PATH
+          hash -r
+          # Sanity-check via absolute path: must be >= 20.12 for styleText.
+          /usr/bin/node --version
+          /usr/bin/node -e 'const {styleText}=require("node:util"); if(typeof styleText!=="function"){process.exit(1)}'
 
           case "$PM" in
             bun)
