@@ -55,15 +55,32 @@ jobs:
             echo "Found compose file: $COMPOSE_FILE"
             cd "$COMPOSE_DIR"
             docker compose up -d
-            # Wait for services to be ready
-            sleep 5
-            # If postgres is present, wait for it and detect random port
+            # If postgres is present, wait for it to be fully ready
             if docker compose ps | grep -q postgres; then
-              for i in $(seq 1 30); do
-                docker compose exec -T postgres pg_isready 2>/dev/null && break
+              echo "Waiting for PostgreSQL to be fully ready..."
+              PG_READY=false
+              for i in $(seq 1 60); do
+                # First check: is the server accepting connections?
+                if docker compose exec -T postgres pg_isready 2>/dev/null; then
+                  # Second check: can we actually run a query?
+                  # pg_isready can return success during brief recovery-mode windows;
+                  # a SELECT 1 confirms the database is truly past recovery.
+                  if docker compose exec -T postgres psql -U postgres -c "SELECT 1" >/dev/null 2>&1; then
+                    PG_READY=true
+                    echo "PostgreSQL is fully ready (attempt $i)"
+                    sleep 2  # brief stabilization pause for edge cases
+                    break
+                  fi
+                fi
+                echo "  Waiting for PostgreSQL... ($i/60)"
                 sleep 2
               done
-              # Detect the random host port mapped to postgres 5432
+              if [ "$PG_READY" = false ]; then
+                echo "::error::PostgreSQL did not become ready within 120 seconds"
+                docker compose logs postgres || true
+                exit 1
+              fi
+              # Detect the host port mapped to postgres 5432
               PG_PORT=$(docker compose port postgres 5432 | cut -d: -f2)
               if [ -n "$PG_PORT" ]; then
                 echo "pg_port=$PG_PORT" >> $GITHUB_OUTPUT
