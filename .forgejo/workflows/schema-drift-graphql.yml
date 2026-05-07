@@ -75,13 +75,13 @@ jobs:
           # "You must install .NET to run this application."
           echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
 
-      - name: Install ${{ inputs.package-manager }} (+ Node 20)
+      - name: Install ${{ inputs.package-manager }} (+ Node 22)
         env:
           PM: ${{ inputs.package-manager }}
         run: |
           set -euo pipefail
 
-          # graphql-codegen's listr2 dep requires Node >= 20.12
+          # graphql-codegen's listr2@10.x dep requires Node >= 22.13.0
           # (styleText from node:util).  The runner image bundles
           # Node 18 in /opt/hostedtoolcache/node and prepends it
           # to PATH via $GITHUB_PATH — NodeSource apt installs to
@@ -94,9 +94,9 @@ jobs:
           # `/opt/hostedtoolcache/node/*/x64/bin` misses some
           # runner layouts.
           #
-          # Strategy: download Node 20 directly from nodejs.org
+          # Strategy: download Node 22 directly from nodejs.org
           # dist CDN (no apt, no sudo for the download itself),
-          # install to an isolated prefix $HOME/.node20, prepend
+          # install to an isolated prefix $HOME/.node22, prepend
           # that to $GITHUB_PATH, then shadow every pre-installed
           # node/npm/npx so no PATH ordering can resurrect Node 18.
 
@@ -107,25 +107,25 @@ jobs:
             *)       echo "::error::Unsupported arch $(uname -m)"; exit 1 ;;
           esac
 
-          # --- download latest Node 20.x from nodejs.org ---
-          TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v20.x/SHASUMS256.txt \
+          # --- download latest Node 22.x from nodejs.org ---
+          TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
             | grep "linux-${NODE_ARCH}\.tar\.xz$" | head -1 | awk '{print $2}')
           if [ -z "$TARBALL" ]; then
-            echo "::error::Could not resolve Node 20 tarball from dist index"
+            echo "::error::Could not resolve Node 22 tarball from dist index"
             exit 1
           fi
-          mkdir -p "$HOME/.node20"
-          curl -fsSL "https://nodejs.org/dist/latest-v20.x/${TARBALL}" \
-            | tar -xJ -C "$HOME/.node20" --strip-components=1
+          mkdir -p "$HOME/.node22"
+          curl -fsSL "https://nodejs.org/dist/latest-v22.x/${TARBALL}" \
+            | tar -xJ -C "$HOME/.node22" --strip-components=1
 
-          NODE_BIN="$HOME/.node20/bin"
+          NODE_BIN="$HOME/.node22/bin"
 
           # Expose via $GITHUB_PATH (prepended in subsequent steps).
           echo "$NODE_BIN" >> "$GITHUB_PATH"
 
           # Belt-and-suspenders: overwrite every node/npm/npx the
           # runner pre-installed so even a PATH that prefers the old
-          # location still executes Node 20.
+          # location still executes Node 22.
           for bin in node npm npx; do
             sudo ln -sf "$NODE_BIN/$bin" "/usr/local/bin/$bin" 2>/dev/null || true
             sudo ln -sf "$NODE_BIN/$bin" "/usr/bin/$bin"       2>/dev/null || true
@@ -148,7 +148,7 @@ jobs:
           done < <(command -v -a node 2>/dev/null || true)
 
           hash -r
-          # Sanity-check via absolute path: must be >= 20.12 for styleText.
+          # Sanity-check via absolute path: must be >= 22.13.0 for listr2@10.x.
           "$NODE_BIN/node" --version
           "$NODE_BIN/node" -e 'const {styleText}=require("node:util"); if(typeof styleText!=="function"){process.exit(1)}'
 
@@ -162,7 +162,7 @@ jobs:
               echo "$HOME/.local/share/pnpm" >> "$GITHUB_PATH"
               ;;
             npm)
-              # Already installed with Node 20 above.
+              # Already installed with Node 22 above.
               ;;
             yarn)
               "$NODE_BIN/npm" install -g yarn
