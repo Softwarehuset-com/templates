@@ -81,55 +81,91 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Even when the project uses bun/pnpm, codegen tools like
-          # graphql-codegen are JS bins with `#!/usr/bin/env node` shebangs —
-          # they spawn whatever `node` is on PATH, not the package-manager's
-          # own runtime. The catthehacker runner image ships Node 18 in
-          # /opt/hostedtoolcache/node and prepends it to PATH via
-          # $GITHUB_PATH, so a plain NodeSource apt install (writes to
-          # /usr/bin/node) gets shadowed and `node --version` still reports
-          # v18.x. graphql-codegen's listr2 dep then dies on `styleText`
-          # from `node:util` (added in Node 20.12).
+          # graphql-codegen's listr2 dep requires Node >= 20.12
+          # (styleText from node:util).  The runner image bundles
+          # Node 18 in /opt/hostedtoolcache/node and prepends it
+          # to PATH via $GITHUB_PATH — NodeSource apt installs to
+          # /usr/bin/node get shadowed and `node --version` still
+          # reports v18.x.
           #
-          # Strategy: install Node 20 via NodeSource so /usr/bin/{node,npm,npx}
-          # exist, then (a) symlink /usr/local/bin/{node,npm,npx} -> /usr/bin
-          # for any layout that prefers it, (b) replace every
-          # /opt/hostedtoolcache/node/*/bin/{node,npm,npx} the runner image
-          # bundled, and (c) prepend /usr/bin to $GITHUB_PATH so subsequent
-          # steps see the freshly installed Node 20 first.
-          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-          sudo apt-get install -y nodejs
+          # Previous fixes used NodeSource apt + symlinks in the
+          # hostedtoolcache, but the NodeSource repo can flake (GPG
+          # key rotation, apt lock, partial sync) and the glob
+          # `/opt/hostedtoolcache/node/*/x64/bin` misses some
+          # runner layouts.
+          #
+          # Strategy: download Node 20 directly from nodejs.org
+          # dist CDN (no apt, no sudo for the download itself),
+          # install to an isolated prefix $HOME/.node20, prepend
+          # that to $GITHUB_PATH, then shadow every pre-installed
+          # node/npm/npx so no PATH ordering can resurrect Node 18.
+
+          # --- resolve architecture ---
+          case "$(uname -m)" in
+            x86_64)  NODE_ARCH=x64 ;;
+            aarch64) NODE_ARCH=arm64 ;;
+            *)       echo "::error::Unsupported arch $(uname -m)"; exit 1 ;;
+          esac
+
+          # --- download latest Node 20.x from nodejs.org ---
+          TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v20.x/SHASUMS256.txt \
+            | grep "linux-${NODE_ARCH}\.tar\.xz$" | head -1 | awk '{print $2}')
+          if [ -z "$TARBALL" ]; then
+            echo "::error::Could not resolve Node 20 tarball from dist index"
+            exit 1
+          fi
+          mkdir -p "$HOME/.node20"
+          curl -fsSL "https://nodejs.org/dist/latest-v20.x/${TARBALL}" \
+            | tar -xJ -C "$HOME/.node20" --strip-components=1
+
+          NODE_BIN="$HOME/.node20/bin"
+
+          # Expose via $GITHUB_PATH (prepended in subsequent steps).
+          echo "$NODE_BIN" >> "$GITHUB_PATH"
+
+          # Belt-and-suspenders: overwrite every node/npm/npx the
+          # runner pre-installed so even a PATH that prefers the old
+          # location still executes Node 20.
           for bin in node npm npx; do
-            sudo ln -sf "/usr/bin/$bin" "/usr/local/bin/$bin"
+            sudo ln -sf "$NODE_BIN/$bin" "/usr/local/bin/$bin" 2>/dev/null || true
+            sudo ln -sf "$NODE_BIN/$bin" "/usr/bin/$bin"       2>/dev/null || true
           done
           for d in /opt/hostedtoolcache/node/*/x64/bin /opt/hostedtoolcache/node/*/*/bin; do
             for bin in node npm npx; do
-              if [ -e "$d/$bin" ]; then
+              if [ -e "$d/$bin" ] || [ -L "$d/$bin" ]; then
                 sudo rm -f "$d/$bin"
-                sudo ln -sf "/usr/bin/$bin" "$d/$bin"
+                sudo ln -sf "$NODE_BIN/$bin" "$d/$bin" 2>/dev/null || true
               fi
             done
           done
-          echo "/usr/bin" >> $GITHUB_PATH
+          # Catch-all: find any other `node` on PATH and replace it.
+          while IFS= read -r old_node; do
+            case "$old_node" in
+              "$NODE_BIN/"*) continue ;;   # don't replace our own
+            esac
+            sudo rm -f "$old_node"
+            sudo ln -sf "$NODE_BIN/node" "$old_node" 2>/dev/null || true
+          done < <(command -v -a node 2>/dev/null || true)
+
           hash -r
           # Sanity-check via absolute path: must be >= 20.12 for styleText.
-          /usr/bin/node --version
-          /usr/bin/node -e 'const {styleText}=require("node:util"); if(typeof styleText!=="function"){process.exit(1)}'
+          "$NODE_BIN/node" --version
+          "$NODE_BIN/node" -e 'const {styleText}=require("node:util"); if(typeof styleText!=="function"){process.exit(1)}'
 
           case "$PM" in
             bun)
               curl -fsSL https://bun.sh/install | bash
-              echo "$HOME/.bun/bin" >> $GITHUB_PATH
+              echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
               ;;
             pnpm)
               curl -fsSL https://get.pnpm.io/install.sh | env SHELL=bash sh -
-              echo "$HOME/.local/share/pnpm" >> $GITHUB_PATH
+              echo "$HOME/.local/share/pnpm" >> "$GITHUB_PATH"
               ;;
             npm)
               # Already installed with Node 20 above.
               ;;
             yarn)
-              npm install -g yarn
+              "$NODE_BIN/npm" install -g yarn
               ;;
             *)
               echo "::error::Unknown package-manager '$PM' (expected: bun, npm, pnpm, yarn)"
