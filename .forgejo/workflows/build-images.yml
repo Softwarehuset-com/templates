@@ -43,7 +43,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: ${{ inputs.submodules }}
-          token: ${{ secrets.forgejo_token }}
+          # Fall back to the runner-injected token when the caller doesn't
+          # pass a custom forgejo_token. Without the fallback, an unset
+          # secret resolves to an empty string and checkout@v4 rejects it
+          # with "Input required and not supplied: token".
+          token: ${{ secrets.forgejo_token || github.token }}
 
       - name: Login to registry
         if: ${{ inputs.push }}
