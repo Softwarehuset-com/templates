@@ -27,6 +27,12 @@ on:
       forgejo_token:
         description: "Token for private submodule checkout"
         required: false
+      REGISTRY_USERNAME:
+        description: "Registry username for docker login"
+        required: true
+      REGISTRY_PASSWORD:
+        description: "Registry password/token for docker login"
+        required: true
 
 jobs:
   build:
