@@ -24,9 +24,6 @@ on:
         type: boolean
         default: false
     secrets:
-      forgejo_token:
-        description: "Token for private submodule checkout"
-        required: false
       REGISTRY_USERNAME:
         description: "Registry username for docker login"
         required: true
@@ -43,7 +40,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: ${{ inputs.submodules }}
-          token: ${{ secrets.forgejo_token }}
 
       - name: Login to registry
         if: ${{ inputs.push }}
