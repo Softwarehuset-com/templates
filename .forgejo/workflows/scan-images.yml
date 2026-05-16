@@ -27,10 +27,6 @@ on:
         description: "Trivy version (empty = apt latest, e.g. 0.69.1)"
         type: string
         default: ""
-    secrets:
-      forgejo_token:
-        description: "Token for private submodule checkout"
-        required: false
 
 jobs:
   scan:
@@ -41,7 +37,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: ${{ inputs.submodules }}
-          token: ${{ secrets.forgejo_token }}
 
       - name: Install Trivy
         run: |
