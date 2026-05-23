@@ -36,8 +36,12 @@ jobs:
           export TAG=$(echo "${{ github.sha }}" | head -c 7)
           export REGISTRY="code.core.ci/softwarehuset"
 
-          cd "${{ inputs.kustomize-path }}"
-          kubectl kustomize . | sed "s|\${TAG}|${TAG}|g; s|\${REGISTRY}|${REGISTRY}|g" | kubectl apply -n "${{ inputs.namespace }}" -f -
+          # --load-restrictor=LoadRestrictionsNone lets configMapGenerator load
+          # files from outside the kustomization root (e.g. ../../scripts/*.sh),
+          # which is required by repos like books/k8s/prod.
+          kubectl kustomize --load-restrictor=LoadRestrictionsNone "${{ inputs.kustomize-path }}" \
+            | sed "s|\${TAG}|${TAG}|g; s|\${REGISTRY}|${REGISTRY}|g" \
+            | kubectl apply -n "${{ inputs.namespace }}" -f -
 
           echo "[deploy-kustomize v5] template loaded"
           echo "Waiting for rollout in ${{ inputs.namespace }}..."
