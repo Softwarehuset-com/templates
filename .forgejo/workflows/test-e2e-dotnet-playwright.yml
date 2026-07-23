@@ -47,7 +47,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: ${{ inputs.submodules }}
-          token: ${{ secrets.FORGEJO_TOKEN }}
+          token: ${{ secrets.TOKEN || github.token }}
 
       - name: Run E2E tests in Playwright image
         env:

@@ -23,16 +23,9 @@ on:
         description: "Checkout with submodules"
         type: boolean
         default: false
-    secrets:
-      REGISTRY_USERNAME:
-        description: "Registry username for docker login"
-        required: true
-      REGISTRY_PASSWORD:
-        description: "Registry password/token for docker login"
-        required: true
-      forgejo_token:
-        description: "Token for actions/checkout (needed for private submodules)"
-        required: false
+    # NOTE: Forgejo does not support 'secrets' in workflow_call.
+    # Secrets (REGISTRY_USERNAME, REGISTRY_PASSWORD, TOKEN) are
+    # inherited automatically from the calling workflow.
 
 jobs:
   build:
@@ -43,7 +36,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: ${{ inputs.submodules }}
-          token: ${{ secrets.forgejo_token }}
+          token: ${{ secrets.TOKEN || github.token }}
 
       - name: Login to registry
         if: ${{ inputs.push }}

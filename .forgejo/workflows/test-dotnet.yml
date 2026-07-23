@@ -23,10 +23,8 @@ on:
         description: "dotnet test filter expression"
         type: string
         default: "Category!=Live&Category!=Integration"
-    secrets:
-      forgejo_token:
-        description: "Token for actions/checkout (needed for private submodules)"
-        required: false
+    # NOTE: Forgejo does not support 'secrets' in workflow_call.
+    # Secrets are inherited automatically from the calling workflow.
 
 jobs:
   test:
@@ -37,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: ${{ inputs.submodules }}
-          token: ${{ secrets.forgejo_token }}
+          token: ${{ secrets.TOKEN || github.token }}
 
       - name: Install .NET
         run: |
@@ -63,14 +61,21 @@ jobs:
             # If postgres is present, wait for it to be fully ready
             if docker compose ps | grep -q postgres; then
               echo "Waiting for PostgreSQL to be fully ready..."
+              # Use the container's actual configured role/db — the image creates
+              # the superuser from POSTGRES_USER (default "postgres"), so a
+              # hardcoded `-U postgres` fails with "role does not exist" whenever
+              # the compose sets a custom user. psql also defaults the dbname to
+              # the username, so pass POSTGRES_DB explicitly too.
+              PGUSER=$(docker compose exec -T postgres printenv POSTGRES_USER 2>/dev/null | tr -d '\r\n'); PGUSER=${PGUSER:-postgres}
+              PGDB=$(docker compose exec -T postgres printenv POSTGRES_DB 2>/dev/null | tr -d '\r\n'); PGDB=${PGDB:-$PGUSER}
               PG_READY=false
               for i in $(seq 1 60); do
                 # First check: is the server accepting connections?
-                if docker compose exec -T postgres pg_isready 2>/dev/null; then
+                if docker compose exec -T postgres pg_isready -U "$PGUSER" -d "$PGDB" 2>/dev/null; then
                   # Second check: can we actually run a query?
                   # pg_isready can return success during brief recovery-mode windows;
                   # a SELECT 1 confirms the database is truly past recovery.
-                  if docker compose exec -T postgres psql -U postgres -c "SELECT 1" >/dev/null 2>&1; then
+                  if docker compose exec -T postgres psql -U "$PGUSER" -d "$PGDB" -c "SELECT 1" >/dev/null 2>&1; then
                     PG_READY=true
                     echo "PostgreSQL is fully ready (attempt $i)"
                     sleep 2  # brief stabilization pause for edge cases
