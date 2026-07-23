@@ -25,10 +25,8 @@ on:
         description: "Checkout with submodules"
         type: boolean
         default: true
-    secrets:
-      forgejo_token:
-        description: "Token for actions/checkout (needed for private submodules)"
-        required: false
+    # NOTE: Forgejo does not support 'secrets' in workflow_call.
+    # Secrets are inherited automatically from the calling workflow.
 
 jobs:
   test:

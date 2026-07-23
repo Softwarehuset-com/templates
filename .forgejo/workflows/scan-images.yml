@@ -27,10 +27,8 @@ on:
         description: "Trivy version (empty = apt latest, e.g. 0.69.1)"
         type: string
         default: ""
-    secrets:
-      forgejo_token:
-        description: "Token for actions/checkout (needed for private submodules)"
-        required: false
+    # NOTE: Forgejo does not support 'secrets' in workflow_call.
+    # Secrets are inherited automatically from the calling workflow.
 
 jobs:
   scan:
