@@ -1,0 +1,97 @@
+name: test-go
+
+# Reusable Go test workflow, matching the test-node / test-python / test-dotnet
+# templates: install Go, optionally auto-start a docker-compose (e.g. Postgres),
+# then `go vet` + `go test ./...`. When a compose Postgres is detected its mapped
+# host port is exported as TEST_DATABASE_URL (postgres://postgres:postgres@...),
+# which DB-gated Go tests can read.
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: "Go version to install (e.g. 1.26)"
+        type: string
+        default: "1.26"
+      working-directory:
+        description: "Directory to run go commands in"
+        type: string
+        default: "."
+      docker-compose:
+        description: "Auto-detect and start docker compose if present"
+        type: boolean
+        default: true
+      submodules:
+        description: "Checkout with submodules"
+        type: boolean
+        default: true
+    secrets:
+      forgejo_token:
+        description: "Token for actions/checkout (needed for private submodules)"
+        required: false
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules }}
+          token: ${{ secrets.forgejo_token }}
+
+      - name: Install Go
+        run: |
+          VER="${{ inputs.go-version }}"
+          wget -q "https://go.dev/dl/go${VER}.linux-amd64.tar.gz" -O /tmp/go.tgz
+          rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz
+          echo "/usr/local/go/bin" >> $GITHUB_PATH
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+          /usr/local/go/bin/go version
+
+      - name: Start docker compose
+        id: docker
+        if: ${{ inputs.docker-compose }}
+        run: |
+          COMPOSE_FILE=$(find . -maxdepth 3 -name "docker-compose.yml" -o -name "docker-compose.yaml" -o -name "compose.yml" -o -name "compose.yaml" | grep -v vendor | head -1)
+          if [ -z "$COMPOSE_FILE" ]; then
+            echo "compose_found=false" >> $GITHUB_OUTPUT
+            echo "No docker-compose file found, skipping"
+            exit 0
+          fi
+          COMPOSE_DIR=$(dirname "$COMPOSE_FILE")
+          echo "compose_dir=$COMPOSE_DIR" >> $GITHUB_OUTPUT
+          echo "compose_found=true" >> $GITHUB_OUTPUT
+          echo "Found compose file: $COMPOSE_FILE"
+          cd "$COMPOSE_DIR"
+          docker compose up -d
+          # If a postgres service is present, wait for it and export its URL.
+          if docker compose ps --services | grep -q '^postgres$'; then
+            echo "Waiting for PostgreSQL..."
+            for i in $(seq 1 60); do
+              if docker compose exec -T postgres pg_isready >/dev/null 2>&1; then
+                echo "PostgreSQL ready (attempt $i)"
+                break
+              fi
+              sleep 2
+            done
+            PG_PORT=$(docker compose port postgres 5432 | cut -d: -f2)
+            if [ -n "$PG_PORT" ]; then
+              echo "pg_port=$PG_PORT" >> $GITHUB_OUTPUT
+              echo "TEST_DATABASE_URL=postgres://postgres:postgres@localhost:${PG_PORT}/postgres?sslmode=disable" >> $GITHUB_ENV
+              echo "Postgres available on host port $PG_PORT"
+            fi
+          fi
+
+      - name: Test
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Stop docker compose
+        if: always() && steps.docker.outputs.compose_found == 'true'
+        run: |
+          cd "${{ steps.docker.outputs.compose_dir }}"
+          docker compose down || true
