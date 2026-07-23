@@ -43,12 +43,27 @@ jobs:
 
       - name: Install Go
         run: |
+          set -euo pipefail
           VER="${{ inputs.go-version }}"
-          wget -q "https://go.dev/dl/go${VER}.linux-amd64.tar.gz" -O /tmp/go.tgz
-          rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz
-          echo "/usr/local/go/bin" >> $GITHUB_PATH
-          echo "$HOME/go/bin" >> $GITHUB_PATH
-          /usr/local/go/bin/go version
+          # Resolve a minor version (e.g. "1.26") to the latest patch release.
+          # Go tarballs are named with the full version (go1.26.0.linux-amd64.tar.gz),
+          # so a bare "1.26" 404s on go.dev/dl.
+          FULL=$(curl -fsSL "https://go.dev/dl/?mode=json&include=all" \
+              | grep -oE "\"version\": *\"go${VER}\.[0-9]+\"" \
+              | grep -oE "go${VER}\.[0-9]+" \
+              | sort -V | tail -1 | sed 's/^go//')
+          if [ -z "$FULL" ]; then
+            # Input was already a full version (e.g. 1.26.0) — use as-is.
+            FULL="$VER"
+          fi
+          echo "Installing Go ${FULL} (requested ${VER})"
+          curl -fsSL "https://go.dev/dl/go${FULL}.linux-amd64.tar.gz" -o /tmp/go.tgz
+          # Install under $HOME (no root/sudo needed).
+          mkdir -p "$HOME/.go"
+          tar -C "$HOME/.go" --strip-components=1 -xzf /tmp/go.tgz
+          echo "$HOME/.go/bin" >> "$GITHUB_PATH"
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+          "$HOME/.go/bin/go" version
 
       - name: Start docker compose
         id: docker
