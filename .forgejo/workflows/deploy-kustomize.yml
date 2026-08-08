@@ -39,10 +39,20 @@ jobs:
           # --load-restrictor=LoadRestrictionsNone lets configMapGenerator load
           # files from outside the kustomization root (e.g. ../../scripts/*.sh),
           # which is required by repos like books/k8s/prod.
+          #
+          # The FIRST sed expression quotes any STANDALONE ${TAG} value ("value: ${TAG}" at end of
+          # line) before the general substitution runs. A short sha is hex, so roughly one deploy in
+          # twenty-eight gets an all-digit TAG (4543509, then 7839572), and an unquoted all-digit YAML
+          # scalar parses as an integer — kubectl then rejects the whole apply with "cannot convert
+          # int64 to string" for that commit only, which reads as a flake and self-heals on the next
+          # merge. Quoting in the SOURCE manifests does not fix it: kustomize's emitter strips quotes
+          # a pre-substitution string does not need, which is how the bank repo's quoted BUILD_SHA
+          # still deployed as an int. Composite uses (image: ${REGISTRY}/app:${TAG}) are unaffected —
+          # they never parse as numbers and never match the end-of-line pattern.
           kubectl kustomize --load-restrictor=LoadRestrictionsNone "${{ inputs.kustomize-path }}" \
-            | sed "s|\${TAG}|${TAG}|g; s|\${REGISTRY}|${REGISTRY}|g" \
+            | sed "s|: \${TAG}[[:space:]]*\$|: \"${TAG}\"|; s|\${TAG}|${TAG}|g; s|\${REGISTRY}|${REGISTRY}|g" \
             | kubectl apply -n "${{ inputs.namespace }}" -f -
 
-          echo "[deploy-kustomize v5] template loaded"
+          echo "[deploy-kustomize v6] template loaded"
           echo "Waiting for rollout in ${{ inputs.namespace }}..."
           kubectl wait --for=condition=Available deployment --all -n "${{ inputs.namespace }}" --timeout=300s
