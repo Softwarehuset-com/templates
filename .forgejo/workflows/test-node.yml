@@ -35,8 +35,15 @@ jobs:
           submodules: ${{ inputs.submodules }}
 
       - name: Install Node.js
+        # METHOD=script is load-bearing. Left to itself nvm's installer autodetects git and does an
+        # ANONYMOUS `git clone https://github.com/nvm-sh/nvm.git` (install.sh v0.40.1 lines 391-396) —
+        # a second hop to a different host than the wget above. Every runner here shares one Docker
+        # daemon and so one egress IP, and GitHub throttles anonymous git from a shared datacenter
+        # address in bursts: three jobs died in ~10s with "could not read Username for
+        # 'https://github.com'" while raw.githubusercontent.com stayed up. METHOD=script keeps the
+        # install on the CDN that was reachable throughout. Mirrors softwarehuset/bank#335.
         run: |
-          wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+          wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | METHOD=script bash
           export NVM_DIR="$HOME/.nvm"
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           nvm install ${{ inputs.node-version }}
