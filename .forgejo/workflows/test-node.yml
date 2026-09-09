@@ -102,15 +102,15 @@ jobs:
 
       - name: Lint
         working-directory: ${{ steps.workdir.outputs.path }}
-        run: ${{ steps.pm.outputs.cmd }} run lint --if-present
+        run: ${{ steps.pm.outputs.cmd }} run --if-present lint
 
       - name: Build
         working-directory: ${{ steps.workdir.outputs.path }}
-        run: ${{ steps.pm.outputs.cmd }} run build --if-present
+        run: ${{ steps.pm.outputs.cmd }} run --if-present build
 
       - name: Test
         working-directory: ${{ steps.workdir.outputs.path }}
-        run: ${{ steps.pm.outputs.cmd }} run test --if-present
+        run: ${{ steps.pm.outputs.cmd }} run --if-present test
 
       - name: Stop docker compose
         if: always() && steps.docker.outputs.compose_found == 'true'
