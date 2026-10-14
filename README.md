@@ -11,6 +11,7 @@ Reusable CI/CD workflows for Forgejo. Other repos call these via `uses:` — no 
 | `test-python.yml` | Python pip install → pytest |
 | `test-e2e-dotnet-playwright.yml` | .NET E2E run inside `mcr.microsoft.com/playwright/dotnet` (browsers + system deps preinstalled, no host-side .NET install) |
 | `build-images.yml` | Build and push Docker images |
+| `agent-image.yml` | Build a project's developer image (`<image>-dev`) and the same image with the Paperclip agent layer on top (`<image>-agent`, via `docker/agentize/Dockerfile`) |
 | `scan-images.yml` | Build Docker images and run a Trivy vulnerability scan (CRITICAL by default) |
 | `secret-scan.yml` | Scan repository contents for committed secrets via gitleaks |
 | `schema-drift-graphql.yml` | Re-export GraphQL schema from a .NET backend, regenerate the typed frontend client, fail on drift |

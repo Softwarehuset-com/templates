@@ -1,0 +1,70 @@
+name: agent-image
+
+on:
+  workflow_call:
+    inputs:
+      registry:
+        description: "Container registry"
+        type: string
+        default: "code.core.ci/softwarehuset"
+      image:
+        description: "Image name; produces <image>-dev (the developer image as built) and <image>-agent (with the Paperclip agent layer)"
+        type: string
+        required: true
+      dockerfile:
+        description: "The project's developer image Dockerfile (Debian/Ubuntu based)"
+        type: string
+        default: "./.devcontainer/Dockerfile"
+      context:
+        description: "Build context"
+        type: string
+        default: "."
+      tag:
+        description: "Image tag (empty = git sha short)"
+        type: string
+        default: ""
+      push:
+        description: "Push images to registry"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.TOKEN || github.token }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: softwarehuset/templates
+          ref: main
+          path: .templates
+          token: ${{ secrets.TOKEN || github.token }}
+
+      - name: Login to registry
+        if: ${{ inputs.push }}
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login "${{ inputs.registry }}" \
+            -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
+      - name: Build developer and agent images
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(echo "${{ github.sha }}" | head -c 7)
+          fi
+          DEV="${{ inputs.registry }}/${{ inputs.image }}-dev"
+          AGENT="${{ inputs.registry }}/${{ inputs.image }}-agent"
+
+          docker build -f "${{ inputs.dockerfile }}" -t "$DEV:$TAG" -t "$DEV:latest" "${{ inputs.context }}"
+          docker build -f .templates/docker/agentize/Dockerfile --build-arg BASE="$DEV:$TAG" -t "$AGENT:$TAG" -t "$AGENT:latest" .templates/docker/agentize
+          docker run --rm "$AGENT:$TAG" sh -c 'claude --version && opencode --version && test -x /usr/local/bin/paperclip-agent-shim'
+
+          if [ "${{ inputs.push }}" = "true" ]; then
+            docker push "$DEV:$TAG" && docker push "$DEV:latest"
+            docker push "$AGENT:$TAG" && docker push "$AGENT:latest"
+          fi
