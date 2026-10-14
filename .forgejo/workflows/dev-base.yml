@@ -1,0 +1,19 @@
+name: dev-base
+
+on:
+  push:
+    branches: [main]
+    paths: ["docker/dev-base/**", "docker/agentize/**", ".forgejo/workflows/dev-base.yml", ".forgejo/workflows/agent-image.yml"]
+  workflow_dispatch:
+
+jobs:
+  images:
+    uses: softwarehuset/templates/.forgejo/workflows/agent-image.yml@main
+    with:
+      image: levior
+      dockerfile: ./docker/dev-base/Dockerfile
+      context: ./docker/dev-base
+    secrets:
+      REGISTRY_USERNAME: djohn
+      REGISTRY_PASSWORD: ${{ secrets.PACKAGE_TOKEN }}
+      forgejo_token: ${{ github.token }}
