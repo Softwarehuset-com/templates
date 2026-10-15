@@ -14,6 +14,7 @@ ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     MISE_GLOBAL_CONFIG_FILE=/etc/mise/config.toml \
     MISE_CACHE_DIR=/tmp/mise-cache \
     MISE_YES=1 \
+    MISE_HIDE_UPDATE_WARNING=1 \
     PATH=/usr/local/mise-bin/node:/usr/local/mise-bin/bun:/usr/local/mise-bin/python:/usr/local/share/mise/shims:$PATH
 
 COPY mise-link /usr/local/bin/mise-link
