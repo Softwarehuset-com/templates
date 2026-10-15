@@ -14,6 +14,9 @@ RUN apt-get update \
     && if ! getent passwd 1000 >/dev/null; then groupadd -g 1000 paperclip && useradd -u 1000 -g 1000 -m -s /bin/bash paperclip; fi \
     && mkdir -p /workspace && chown 1000:1000 /workspace
 COPY --from=runtime /usr/local/bin/paperclip-agent-shim /usr/local/bin/paperclip-agent-shim
+ENV NUGET_PACKAGES=/home/paperclip/.cache/nuget \
+    npm_config_cache=/home/paperclip/.cache/npm \
+    BUN_INSTALL_CACHE_DIR=/home/paperclip/.cache/bun
 USER 1000:1000
 WORKDIR /workspace
 ENTRYPOINT ["/usr/bin/tini", "--"]
