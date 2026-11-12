@@ -39,6 +39,10 @@ jobs:
 
       - name: Install .NET
         run: |
+          if ! ldconfig -p | grep -q libicuuc; then
+            SUDO=$(command -v sudo || true)
+            $SUDO apt-get update -qq && $SUDO apt-get install -y -qq libicu-dev
+          fi
           wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
           bash /tmp/dotnet-install.sh --channel ${{ inputs.dotnet-channel }} --install-dir $HOME/.dotnet
           echo "$HOME/.dotnet" >> $GITHUB_PATH
